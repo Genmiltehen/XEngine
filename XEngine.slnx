@@ -1,0 +1,11 @@
+<Solution>
+  <Folder Name="/benchmarks/">
+    <Project Path="benchmarks/XEngine.Core.Benchmarks/XEngine.Core.Benchmarks.csproj" />
+  </Folder>
+  <Folder Name="/src/">
+    <Project Path="src/XEngine.Core/XEngine.Core.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/XEngine.Core.Tests/XEngine.Core.Tests.csproj" />
+  </Folder>
+</Solution>

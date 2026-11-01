@@ -26,17 +26,21 @@
 ```
 src/XEngine.Core/
   Ecs/            EntityId, World, Archetype, ComponentType, Column<T>, Query, CommandBuffer
-  Hierarchy/      Node, HierarchySystem
+  Hierarchy/      Node (обслуживается World)
   Transforms/     Transform2D, TransformSystem
   Scenes/         ISceneBuilder, Scene, SceneManager, SceneBuildContext
   Systems/        ISystem, SystemPhase, SystemScheduler, WorldConfigurator
   Services/       EngineServices
   Time/           GameTime
 tests/XEngine.Core.Tests/
+benchmarks/XEngine.Core.Benchmarks/
+docs/plans.md
+README.md
 ```
 
 - `XEngine.Core` не имеет внешних NuGet-зависимостей.
 - Тесты — xUnit.
+- Бенчмарки — BenchmarkDotNet, отдельный проект.
 - Рендер и физика появятся отдельными проектами позже; в `Core` для них только точки расширения (`World.Resources`, системы, компоненты).
 
 ## 4. ECS
@@ -64,7 +68,7 @@ public readonly record struct EntityId(int Index, int Version)
 - `ComponentType<T>.Id` выдаётся один раз при первом обращении; негенеричный `ComponentType` хранит фабрику колонки.
 - `Add<T>`/`Remove<T>` переводят сущность в целевой архетип: общие компоненты копируются, строка удаляется swap-back-ом, `Row` переехавшей сущности обновляется.
 - На первом этапе одна колонка на архетип. API запросов строится через чанки, чтобы позже можно было нарезать колонки на чанки без изменения пользовательского кода.
-- `Node` обязателен: `World.Create()` создаёт сущность сразу в архетипе с `Node` и инициализирует связи как `EntityId.None`, а флаги — как `NodeFlags.ActiveSelf`. `default(Node)` как рабочее значение не используется.
+- `Node` обязателен: `World.Create()` создаёт сущность сразу в архетипе с `Node` и инициализирует связи как `EntityId.None`, а флаги — как `NodeFlags.ActiveSelf | NodeFlags.ActiveInHierarchy`. `default(Node)` как рабочее значение не используется.
 
 ### 4.3. Компоненты
 
@@ -148,31 +152,41 @@ world.Destroy(entity, DestroyMode.Recursive);
 ### 4.7. World и ресурсы
 
 ```csharp
-public sealed class World
+public sealed class World : IDisposable
 {
+    public World(WorldConfigurator? configurator = null);
+
+    public GameTime Time { get; }
+
     public EntityId Create();
-    public void Destroy(EntityId entity, DestroyMode mode = DestroyMode.ReparentChildren);
+    public void Destroy(EntityId entity, DestroyMode mode = DestroyMode.ReparentChildren, bool keepWorld = false);
     public void Add<T>(EntityId entity, T component) where T : struct, IComponent;
     public void Remove<T>(EntityId entity) where T : struct, IComponent;
     public ref T Get<T>(EntityId entity) where T : struct, IComponent;
     public bool TryGet<T>(EntityId entity, out T component) where T : struct, IComponent;
     public bool Has<T>(EntityId entity) where T : struct, IComponent;
     public void SetParent(EntityId child, EntityId parent, bool keepWorld = false);
+    public void SetActive(EntityId entity, bool active);
     public Query<T> Query<T>() where T : struct, IComponent;
     public CommandBuffer BeginCommands();
     public void Submit(CommandBuffer commands);
 
     public T GetResource<T>() where T : class;
+    public bool TryGetResource<T>(out T? resource) where T : class;
     public void SetResource<T>(T resource) where T : class;
+    public bool RemoveResource<T>() where T : class;
 
     public void AddSystem(SystemPhase phase, ISystem system);
     public void Update(float dt);
+    public void UpdateTransforms(float dt = 0f);
     public void Dispose();
 }
 ```
 
-- `World` — контейнер ECS, систем и ресурсов.
+- `World` — контейнер ECS, систем и ресурсов. Конструктор без аргумента применяет `WorldConfigurators.Default`.
 - `World.Dispose` идемпотентен, освобождает системы и ресурсы, реализующие `IDisposable`.
+- `SetResource` освобождает предыдущий ресурс того же типа, если он реализует `IDisposable`; `RemoveResource` делает то же при удалении.
+- `World.Update` обновляет `GameTime` и выполняет фазы систем. `UpdateTransforms` выполняет только трансформ-фазу и не двигает время — им пользуются сцены при построении.
 - Глобальные сервисы (конфиг, логгер, ассеты, будущий рендер) живут в `EngineServices` и передаются через контекст сцены.
 
 ## 5. Иерархия и Transform
@@ -211,7 +225,7 @@ public struct Transform2D : IComponent
 - Дети хранятся в стабильном порядке через `FirstChild`/`LastChild` и двусвязный список.
 - `SetParent` проверяет циклы, обновляет `Depth` поддерева и при необходимости сохраняет мировую трансформацию.
 - Родитель без `Transform2D` считается identity.
-- `ActiveInHierarchy` пересчитывается `HierarchySystem` при изменении иерархии.
+- `ActiveInHierarchy` пересчитывается `World` при изменении иерархии или `ActiveSelf`.
 - На первом этапе `TransformSystem` каждый кадр полностью обходит дерево и пересчитывает `World`. Оптимизация dirty-поддеревьями — после бенчмарков и без изменения API.
 - `Local = Scale * Rotation * Translation`.
 - `World = Local * Parent.World`.
@@ -237,19 +251,20 @@ public interface ISystem
 
 Порядок кадра:
 
-1. Применить накопленные команды.
-2. Обслужить структурные изменения иерархии и пересчитать `ActiveInHierarchy`.
-3. `PreUpdate`.
-4. `Update`.
-5. `PostUpdate`.
-6. Фаза `Transform`: `TransformSystem` пересчитывает мировые матрицы.
-7. Применить команды, уничтожить удалённое, обновить флаги.
+1. `World.Update` увеличивает `GameTime` (`DeltaTime`, `TotalTime`, `FrameCount`).
+2. Выполняется `PreUpdate`.
+3. Выполняется `Update`.
+4. Выполняется `PostUpdate`.
+5. Выполняется `Transform`: `TransformSystem` пересчитывает мировые матрицы.
 
 - Внутри фазы системы выполняются в порядке регистрации.
+- Система, добавившая новую систему в уже выполняющуюся фазу, увидит её со следующего кадра.
+- Иерархия обслуживается сразу при структурных вызовах `World` (`SetParent`, `SetActive`, `Destroy`); отдельной системы иерархии нет.
+- `CommandBuffer` применяется, когда система сама вызывает `world.Submit(cmd)` после обхода запроса. Автоматического глобального буфера нет.
 - Магические числовые приоритеты не используются.
 - Порядок фаз фиксирован; расширение — через новые фазы или явную регистрацию.
 - `GameTime` хранит `DeltaTime`, `TotalTime`, `FrameCount`; фиксированный шаг и интерполяция — позже на уровне runtime.
-- `WorldConfigurator` (делегат или интерфейс) добавляет в каждый новый мир базовые системы (например, `TransformSystem`) и общие ресурсы. Обслуживание иерархии — встроенная часть `World`, а не пользовательская система.
+- `WorldConfigurator` (делегат) добавляет в каждый новый мир базовые системы (например, `TransformSystem`) и общие ресурсы. Обслуживание иерархии — встроенная часть `World`, а не пользовательская система.
 
 ## 7. Сцены
 
@@ -273,6 +288,7 @@ public sealed class SceneBuildContext
 - Сцена не обязана наследоваться от базового класса сцены.
 - `ISceneBuilder` создаёт начальные сущности, добавляет компоненты, регистрирует системы и ресурсы сцены.
 - Один и тот же билдер можно использовать для `Replace`, `Push` и `Reload`.
+- `Scene` хранит только рантайм-состояние (`Name`, `World`, `State`). `SceneManager` хранит рядом со сценой её `ISceneBuilder`, чтобы `Reload` мог пересоздать сцену.
 - Позже `ScriptSceneBuilder : ISceneBuilder` сможет интерпретировать скриптовый язык и вызывать те же API мира. Для этого менять ядро не потребуется.
 - Префабы позже подключаются как сервис (`PrefabRegistry`) и используются билдерами и скриптами.
 
@@ -313,13 +329,15 @@ public sealed class Scene
     public string Name { get; }
     public World World { get; }
     public SceneState State { get; }
-    public ISceneBuilder Builder { get; }
 }
 
 public sealed class SceneManager
 {
+    public SceneManager(EngineServiceContainer? services = null, WorldConfigurator? configurator = null);
+
     public Scene? Current { get; }
-    public IReadOnlyList<Scene> Stack { get; }
+    public int SceneCount { get; }
+    public EngineServiceContainer Services { get; }
 
     public void Replace(ISceneBuilder builder, string name = "");
     public void Push(ISceneBuilder builder, string name = "");
@@ -330,12 +348,14 @@ public sealed class SceneManager
 }
 ```
 
+- `SceneManager` создаёт `EngineServices`, если они не переданы, и тогда освобождает их вместе с собой. Внешние сервисы менеджер не освобождает.
+- `SceneManager` передаёт `WorldConfigurator` каждому новому миру; без аргумента используется `WorldConfigurators.Default`.
 - `Replace` заменяет текущую сцену.
 - `Push` кладёт новую сцену поверх стека и ставит предыдущую на паузу.
-- `Pop` уничтожает верхнюю сцену и возвращает предыдущую.
-- `Reload` пересоздаёт текущую сцену через её `ISceneBuilder`.
-- Переходы, запрошенные во время `Update` или `Build`, ставятся в очередь и применяются в конце кадра, вне итерации по ECS.
-- `Replace`, вызванный до первого `Update`, применяется при первом `Update`.
+- `Pop` уничтожает верхнюю сцену и возвращает предыдущую; `Pop` на пустом стеке — no-op, после `Pop` последней сцены `Current` равен `null`.
+- `Reload` пересоздаёт текущую сцену через `ISceneBuilder`, сохранённый менеджером рядом со сценой; без текущей сцены бросает `InvalidOperationException`.
+- Переходы, запрошенные во время `Update` или `Build`, ставятся в очередь и применяются в конце кадра, вне итерации по ECS. Переходы, запрошенные до первого `Update`, применяются в начале первого кадра.
+- Переход, запрошенный внутри `Build`, применяется после текущего кадра, а не рекурсивно внутри построения.
 - `Replace` сначала строит новую сцену. Если построение упало, новая сцена освобождается, текущая остаётся активной.
 - После успешного построения старая сцена переводится в `Unloading` и освобождается.
 - `SceneManager.Dispose` освобождает все сцены стека сверху вниз.
@@ -374,89 +394,24 @@ public sealed class SceneManager
 - Физика подключается отдельным проектом: свои компоненты, системы и ресурс физического мира.
 - `World.Resources` и `AddSystem` — достаточные точки интеграции; при необходимости позже добавляется интерфейс `IPhysicsBackend`.
 
-## 9. Тестирование
+## 9. Этапы
 
-- Тестовый проект — xUnit, без лишних зависимостей.
-- `Entity lifecycle`: create/destroy, переиспользование индексов, инвалидация старых `EntityId`, `IsAlive`.
-- `Archetype transitions`: add/remove, сохранение значений общих компонентов, swap-back и обновление `Row`, повторные операции, tag-компоненты.
-- `Queries and ForEach`: 0/1/2/3 компонента, `With<T>`/`Without<T>`, пустые архетипы, несколько архетипов, корректность `ref`-мутаций, детерминированный порядок.
-- `Structural safety`: изменение структуры внутри `ForEach` ловится в Debug; `CommandBuffer` даёт ожидаемый результат; create+destroy в одном буфере.
-- `Hierarchy`: порядок детей, переподвешивание, запрет циклов, `Depth`, `ActiveInHierarchy`, уничтожение с рекурсией и с переподвешиванием, сохранение мировой трансформации.
-- `Transforms`: вложенные scale/rotation/translation, родитель без `Transform2D`, пересчёт после переподвешивания, сравнение с эталонными матрицами `System.Numerics`.
-- `Scenes`: построение через `ISceneBuilder`, начальные сущности и системы, `Replace`/`Push`/`Pop`/`Reload`, пауза нижних сцен, отложенные переходы, ошибка построения, освобождение ресурсов.
-- `Property/fuzz`: случайная последовательность create/add/remove/destroy/setParent сверяется с эталонной моделью (`Dictionary<EntityId, HashSet<Type>>` + parent map); проверяются живость, набор компонентов, отсутствие циклов, согласованность parent/child, результаты запросов. Фиксированный seed.
-- `Allocations`: после прогрева `ForEach` не аллоцирует при использовании статического делегата или перегрузки с состоянием.
+### Упрочнение ядра
 
-## 10. Этапы
+- Пересчёт трансформов — доминирующая стоимость кадра. Рассмотреть dirty-поддеревья или кэш колонок на время обхода; решение принимать по повторным замерам.
+- Кэш списка архетипов под запрос — только если профиль покажет, что перебор архетипов заметен на фоне обхода сущностей.
+- Пул для `CommandBuffer` — если буфер окажется горячим путём (сейчас ~370 B на операцию).
+- Критерий: известные узкие места закрыты или осознанно оставлены, API стабилен для следующего этапа.
 
-### M0. База репозитория
+## 10. Открытые вопросы
 
-- Реинициализировать git одним чистым initial commit.
-- Создать структуру `src/XEngine.Core` и `tests/XEngine.Core.Tests`.
-- Добавить `.editorconfig`, `Directory.Build.props`, `global.json`, настройки nullable и анализаторов.
-- Подключить xUnit и пустой smoke-тест.
-- Критерий: `dotnet build` и `dotnet test` проходят, Core без NuGet-зависимостей.
-
-### M1. Хранилище ECS
-
-- `EntityId`, `EntityStore`, свободные индексы и версии.
-- `ComponentType`, `ComponentMask`, `Column<T>`, `Archetype`.
-- `World.Create/Destroy/Add/Remove/Get/Has`.
-- Прямой API и базовые тесты жизненного цикла и переходов.
-- Критерий: тесты на архетипы и swap-back зелёные.
-
-### M2. Запросы и CommandBuffer
-
-- `Query<T...>` с `With<T>`/`Without<T>`.
-- `ForEach` с `EntityId` и без, перегрузка с состоянием.
-- Debug-защита от структурных изменений во время обхода.
-- `CommandBuffer` с отложенным create/add/remove/destroy/setParent.
-- Тесты запросов, `ref`-мутаций, порядка и буфера.
-- Критерий: `ForEach` не аллоцирует на сущность, структурные изменения безопасны.
-
-### M3. Иерархия и трансформы
-
-- `Node`, `HierarchySystem`, `Transform2D`, `TransformSystem`.
-- Переподвешивание, циклы, `Depth`, `ActiveInHierarchy`.
-- Уничтожение с рекурсией и с сохранением детей.
-- Тесты вложенных трансформов и эталонных матриц.
-- Критерий: иерархия и мировые матрицы совпадают с эталоном.
-
-### M4. World loop и системы
-
-- `ISystem`, `SystemPhase`, `SystemScheduler`.
-- `World.Update`, `GameTime`, `WorldConfigurator`.
-- `World.Resources` и освобождение ресурсов.
-- Headless-пример, обновляющий мир N кадров.
-- Критерий: системы выполняются в детерминированном порядке, ресурсы освобождаются.
-
-### M5. Сцены
-
-- `ISceneBuilder`, `SceneBuildContext`, `Scene`, `SceneManager`.
-- `Replace`, `Push`, `Pop`, `Reload`, стек и пауза.
-- Очередь переходов на конец кадра.
-- Ошибочное построение не ломает текущую сцену.
-- Тесты сцен и жизненного цикла.
-- Критерий: переходы и инициализация сцен работают без рендера.
-
-### M6. Упрочнение ядра
-
-- Fuzz-тест ECS и иерархии.
-- Проверка аллокаций.
-- Бенчмарки запросов, структурных изменений и пересчёта трансформов.
-- Кэш архетипов под запросы и dirty-поддеревья — только по результатам замеров.
-- README и документация по ECS/сценам.
-- Критерий: известны узкие места, API стабилен для следующего этапа.
-
-## 11. Открытые вопросы
-
-- 2D-трансформ — текущая база. Если движок должен быть 3D-ready с самого начала, `Transform2D` заменяется на `Transform3D` с `Vector3`/`Quaternion`/`Matrix4x4` до начала M3.
+- 2D-трансформ — текущая база. Если движку нужен 3D-ready фундамент, `Transform2D` заменяется на `Transform3D` до появления 3D-специфичных подсистем.
 - Асинхронная загрузка сцен и `BuildAsync` — после стабилизации синхронного API.
-- Хуки `OnEnter`/`OnExit` — только если понадобятся после M5.
-- Формат префабов и скриптового языка — после M5, поверх `ISceneBuilder`.
+- Хуки `OnEnter`/`OnExit` — только если понадобятся после стабилизации сцен.
+- Формат префабов и скриптового языка — поверх `ISceneBuilder`.
 - Политика логирования — после появления runtime-слоя.
 
-## 12. Вне текущего этапа
+## 11. Вне текущего этапа
 
 - Silk.NET, окно, ввод, OpenGL.
 - Спрайты, NineSlice, камера, батчинг.

@@ -1,0 +1,121 @@
+namespace XEngine.Core.Ecs;
+
+public readonly struct Query<T1> where T1 : struct, IComponent
+{
+    private readonly World _world;
+    private readonly ComponentMask _with;
+    private readonly ComponentMask _without;
+
+    internal Query(World world, ComponentMask with) : this(world, with, ComponentMask.Empty) { }
+
+    private Query(World world, ComponentMask with, ComponentMask without)
+    {
+        _world = world;
+        _with = with;
+        _without = without;
+    }
+
+    public Query<T1> With<T>() where T : struct, IComponent => new(_world, _with.With(ComponentType<T>.Id), _without);
+    public Query<T1> Without<T>() where T : struct, IComponent => new(_world, _with, _without.With(ComponentType<T>.Id));
+
+    public void ForEach(QueryAction<T1> action)
+    {
+        ArgumentNullException.ThrowIfNull(action);
+        World world = _world;
+#if DEBUG
+        world.BeginIteration();
+        try
+        {
+#endif
+            foreach (Archetype archetype in world.FilterArchetypes(_with, _without))
+            {
+                Column<T1> components = archetype.GetColumn<T1>();
+                for (var row = 0; row < archetype.Count; row++) action(ref components[row]);
+            }
+#if DEBUG
+        }
+        finally
+        {
+            world.EndIteration();
+        }
+#endif
+    }
+
+    public void ForEach(EntityQueryAction<T1> action)
+    {
+        ArgumentNullException.ThrowIfNull(action);
+        World world = _world;
+#if DEBUG
+        world.BeginIteration();
+        try
+        {
+#endif
+            foreach (Archetype archetype in world.FilterArchetypes(_with, _without))
+            {
+                Column<T1> components = archetype.GetColumn<T1>();
+                EntityId[] entities = archetype.Entities;
+                for (var row = 0; row < archetype.Count; row++) action(entities[row], ref components[row]);
+            }
+#if DEBUG
+        }
+        finally
+        {
+            world.EndIteration();
+        }
+#endif
+    }
+
+    public void ForEach<TState>(in TState state, StateQueryAction<TState, T1> action)
+    {
+        ArgumentNullException.ThrowIfNull(action);
+        World world = _world;
+#if DEBUG
+        world.BeginIteration();
+        try
+        {
+#endif
+            foreach (Archetype archetype in world.FilterArchetypes(_with, _without))
+            {
+                Column<T1> components = archetype.GetColumn<T1>();
+                for (var row = 0; row < archetype.Count; row++) action(in state, ref components[row]);
+            }
+#if DEBUG
+        }
+        finally
+        {
+            world.EndIteration();
+        }
+#endif
+    }
+
+    public void ForEach<TState>(in TState state, StateEntityQueryAction<TState, T1> action)
+    {
+        ArgumentNullException.ThrowIfNull(action);
+        World world = _world;
+#if DEBUG
+        world.BeginIteration();
+        try
+        {
+#endif
+            foreach (Archetype archetype in world.FilterArchetypes(_with, _without))
+            {
+                Column<T1> components = archetype.GetColumn<T1>();
+                EntityId[] entities = archetype.Entities;
+                for (var row = 0; row < archetype.Count; row++) action(in state, entities[row], ref components[row]);
+            }
+#if DEBUG
+        }
+        finally
+        {
+            world.EndIteration();
+        }
+#endif
+    }
+
+    public int Count()
+    {
+        int count = 0;
+        foreach (Archetype archetype in _world.FilterArchetypes(_with, _without)) count += archetype.Count;
+        return count;
+    }
+}
