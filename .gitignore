@@ -364,3 +364,6 @@ FodyWeavers.xsd
 
 # VSCode (local tasks/launch with machine-specific paths)
 .vscode/
+
+# Local archive of the pre-ECS prototype (reference only, not part of the engine)
+/legacy/
