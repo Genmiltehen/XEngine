@@ -31,6 +31,8 @@ src/XEngine.Core/
   Scenes/         ISceneBuilder, Scene, SceneManager, SceneBuildContext
   Systems/        ISystem, SystemPhase, SystemScheduler, WorldConfigurator
   Services/       EngineServices
+  Modules/        IEngineModule, CoreModule
+  Hosting/        Engine, EngineBuilder
   Time/           GameTime
 tests/XEngine.Core.Tests/
 benchmarks/XEngine.Core.Benchmarks/
@@ -65,7 +67,7 @@ public readonly record struct EntityId(int Index, int Version)
 - Внутри архетипа: `EntityId[] Entities` и по одной плотной колонке `Column<T>` на компонент.
 - `Column<T>` — `T[]` + `Count`, рост по doubling.
 - `ComponentMask` — битсет на 256 типов (4 × `ulong`), хэш кэшируется.
-- `ComponentType<T>.Id` выдаётся один раз при первом обращении; негенеричный `ComponentType` хранит фабрику колонки.
+- `ComponentType` — негенеричный дескриптор: `Id`, имя, CLR-тип и фабрика колонки. `Id` выдаёт `ComponentRegistry` при регистрации, а не generic-static.
 - `Add<T>`/`Remove<T>` переводят сущность в целевой архетип: общие компоненты копируются, строка удаляется swap-back-ом, `Row` переехавшей сущности обновляется.
 - На первом этапе одна колонка на архетип. API запросов строится через чанки, чтобы позже можно было нарезать колонки на чанки без изменения пользовательского кода.
 - `Node` обязателен: `World.Create()` создаёт сущность сразу в архетипе с `Node` и инициализирует связи как `EntityId.None`, а флаги — как `NodeFlags.ActiveSelf | NodeFlags.ActiveInHierarchy`. `default(Node)` как рабочее значение не используется.
@@ -155,7 +157,9 @@ world.Destroy(entity, DestroyMode.Recursive);
 public sealed class World : IDisposable
 {
     public World(WorldConfigurator? configurator = null);
+    public World(ComponentRegistry components, WorldConfigurator? configurator = null);
 
+    public ComponentRegistry Components { get; }
     public GameTime Time { get; }
 
     public EntityId Create();
@@ -188,6 +192,51 @@ public sealed class World : IDisposable
 - `SetResource` освобождает предыдущий ресурс того же типа, если он реализует `IDisposable`; `RemoveResource` делает то же при удалении.
 - `World.Update` обновляет `GameTime` и выполняет фазы систем. `UpdateTransforms` выполняет только трансформ-фазу и не двигает время — им пользуются сцены при построении.
 - Глобальные сервисы (конфиг, логгер, ассеты, будущий рендер) живут в `EngineServices` и передаются через контекст сцены.
+
+### 4.8. Реестр компонентов и модули
+
+- `ComponentRegistry` — один на движок, общий для всех миров и сцен. Владеет `Id`, именем, CLR-типом и фабрикой колонки.
+- `ComponentType<T>` удалён: generic-синглтон больше не выдаёт `Id`. `World.Add<T>/Get<T>/Has<T>` сохраняют сигнатуры и резолвят тип через `World.Components`.
+- Регистрация выполняется без рефлексии: `context.Register<T>("game.Health")` создаёт замыкание `capacity => new Column<T>(capacity)`. Никаких `Activator`, `MakeGenericType` и сканирования сборок.
+- Модуль реализует `IEngineModule` с тремя фазами:
+  - `ConfigureComponents(ComponentRegisterContext)` — глобальные компоненты, один раз до создания миров;
+  - `ConfigureServices(EngineServiceContainer)` — глобальные сервисы, один раз;
+  - `ConfigureWorld(World)` — системы и ресурсы, для каждого мира.
+- Порядок сборки: все `ConfigureComponents` → `ComponentRegistry.Freeze()` → все `ConfigureServices` → создание `SceneManager`.
+- После заморозки регистрация запрещена, а `Get<T>` для незарегистрированного типа бросает понятную ошибку. Это защищает скриптовый слой от случайного изменения каталога в рантайме.
+- Имена компонентов стабильны и сохраняются в сценах; числовые `Id` не сохраняются, потому что порядок регистрации модулей может измениться.
+- Скриптовый слой получает read-only каталог: `TryGet(name)`, `GetById(id)`, `Types`. Преобразование значений скрипта в C#-структуры — отдельный слой биндинга поверх реестра.
+- `EngineBuilder` собирает реестр, сервисы и `SceneManager`; `Engine` владеет ими и освобождает сцены, модули и сервисы.
+- `World()` и `SceneManager()` без аргументов создают локальный незамороженный реестр для тестов и standalone-использования. Production-путь — `EngineBuilder`/`Engine` с общим замороженным реестром.
+
+```csharp
+public interface IEngineModule
+{
+    void ConfigureComponents(ComponentRegisterContext context) { }
+    void ConfigureServices(EngineServiceContainer services) { }
+    void ConfigureWorld(World world) { }
+}
+
+public sealed class CoreModule : IEngineModule
+{
+    public void ConfigureComponents(ComponentRegisterContext context)
+    {
+        context.Register<Node>("core.Node");
+        context.Register<Transform2D>("core.Transform2D");
+    }
+
+    public void ConfigureWorld(World world) => WorldConfigurators.Default(world);
+}
+```
+
+```csharp
+using Engine engine = new EngineBuilder()
+    .AddModule(new GameplayModule())
+    .AddModule(new RenderingModule())
+    .Build();
+
+engine.Scenes.Replace(new MainSceneBuilder());
+```
 
 ## 5. Иерархия и Transform
 
@@ -402,6 +451,11 @@ public sealed class SceneManager
 - Кэш списка архетипов под запрос — только если профиль покажет, что перебор архетипов заметен на фоне обхода сущностей.
 - Пул для `CommandBuffer` — если буфер окажется горячим путём (сейчас ~370 B на операцию).
 - Критерий: известные узкие места закрыты или осознанно оставлены, API стабилен для следующего этапа.
+
+### Отложенные замеры
+
+- **TODO(benchmarks):** после перехода на `ComponentRegistry` бенчмарки не запускались: текущая машина не тянет BenchmarkDotNet, числа будут несопоставимы с таблицей в `README.md`. Другая сессия должна повторить замеры на машине из README и проверить регрессию резолва `T` в `World.Add<T>/Get<T>`.
+- Если регрессия заметна, добавить `FrozenDictionary` (уже используется после `Freeze`) или внутренний `[ThreadStatic]`-кэш `ComponentLookup<T>` без изменения публичного API.
 
 ## 10. Открытые вопросы
 

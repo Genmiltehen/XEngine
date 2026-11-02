@@ -23,18 +23,18 @@ public sealed class CommandBuffer
     {
         if (typeof(T) == typeof(Node)) throw new InvalidOperationException("Node is owned by the world and cannot be added manually.");
         EntityCommands group = GetOrCreate(entity);
-        var typeId = ComponentType<T>.Id;
-        group.Additions[typeId] = new CommandComponent<T>(component);
-        group.Removals.Remove(typeId);
+        ComponentType type = _world.Components.Get<T>();
+        group.Additions[type.Id] = new CommandComponent<T>(component, type.Id);
+        group.Removals.Remove(type.Id);
     }
 
     public void Remove<T>(EntityId entity) where T : struct, IComponent
     {
         if (typeof(T) == typeof(Node)) throw new InvalidOperationException("Node is owned by the world and cannot be removed.");
         EntityCommands group = GetOrCreate(entity);
-        var typeId = ComponentType<T>.Id;
-        group.Removals.Add(typeId);
-        group.Additions.Remove(typeId);
+        ComponentType type = _world.Components.Get<T>();
+        group.Removals.Add(type.Id);
+        group.Additions.Remove(type.Id);
     }
 
     public void Destroy(EntityId entity, DestroyMode mode = DestroyMode.ReparentChildren, bool keepWorld = false)
@@ -67,7 +67,7 @@ public sealed class CommandBuffer
             EntityId entity = group.Entity;
             if (group.IsCreated)
             {
-                ComponentMask mask = ComponentMask.Empty.With(ComponentType<Node>.Id);
+                ComponentMask mask = ComponentMask.Empty.With(_world.Components.Get<Node>().Id);
                 foreach (var typeId in group.Removals) mask = mask.Without(typeId);
                 foreach (ICommandComponent addition in group.Additions.Values) mask = mask.With(addition.TypeId);
                 world.ActivateReserved(entity, mask);

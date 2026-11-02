@@ -14,6 +14,7 @@ public sealed class SceneBuildContext
     }
 
     public World World { get; }
+    public ComponentRegistry Components => World.Components;
     public SceneManager Scenes { get; }
     public EngineServiceContainer Services { get; }
     public CancellationToken Cancellation { get; }

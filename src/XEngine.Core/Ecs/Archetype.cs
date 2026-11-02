@@ -4,11 +4,13 @@ internal sealed class Archetype
 {
     private const int MinimumCapacity = 4;
 
+    private readonly ComponentRegistry _registry;
     private readonly int[] _columnIndices;
     private EntityId[] _entities = [];
 
-    public Archetype(ComponentMask mask)
+    public Archetype(ComponentMask mask, ComponentRegistry registry)
     {
+        _registry = registry;
         Mask = mask;
         Span<int> ids = stackalloc int[ComponentMask.Capacity];
         var typeCount = mask.CopyTypeIds(ids);
@@ -18,7 +20,7 @@ internal sealed class Archetype
         Array.Fill(_columnIndices, -1);
         for (var i = 0; i < typeCount; i++)
         {
-            var type = ComponentType.GetById(ids[i]);
+            ComponentType type = registry.GetById(ids[i]);
             Types[i] = type;
             Columns[i] = type.CreateColumn(MinimumCapacity);
             _columnIndices[ids[i]] = i;
@@ -33,7 +35,7 @@ internal sealed class Archetype
 
     public int IndexOf(int componentTypeId) => _columnIndices[componentTypeId];
 
-    public Column<T> GetColumn<T>() where T : struct, IComponent => (Column<T>)Columns[_columnIndices[ComponentType<T>.Id]];
+    public Column<T> GetColumn<T>() where T : struct, IComponent => (Column<T>)Columns[_columnIndices[_registry.Get<T>().Id]];
 
     public int AddEntity(EntityId entity)
     {

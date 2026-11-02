@@ -4,16 +4,30 @@ using XEngine.Core.Systems;
 
 namespace XEngine.Core.Scenes;
 
-public sealed class SceneManager(EngineServiceContainer? services = null, WorldConfigurator? configurator = null) : IDisposable
+public sealed class SceneManager : IDisposable
 {
     private readonly Stack<Entry> _stack = new();
     private readonly Queue<Transition> _pending = new();
-    private readonly WorldConfigurator? _configurator = configurator;
-    private readonly bool _ownsServices = services is null;
+    private readonly ComponentRegistry _components;
+    private readonly WorldConfigurator? _configurator;
+    private readonly bool _ownsServices;
     private bool _isUpdating;
     private bool _disposed;
 
-    public EngineServiceContainer Services { get; } = services ?? new EngineServiceContainer();
+    public SceneManager(EngineServiceContainer? services = null, WorldConfigurator? configurator = null)
+        : this(new ComponentRegistry(), services, configurator) { }
+
+    public SceneManager(ComponentRegistry components, EngineServiceContainer? services = null, WorldConfigurator? configurator = null)
+    {
+        ArgumentNullException.ThrowIfNull(components);
+        _components = components;
+        _configurator = configurator;
+        _ownsServices = services is null;
+        Services = services ?? new EngineServiceContainer();
+    }
+
+    public ComponentRegistry Components => _components;
+    public EngineServiceContainer Services { get; }
     public Scene? Current => _stack.Count == 0 ? null : _stack.Peek().Scene;
     public int SceneCount => _stack.Count;
 
@@ -130,7 +144,7 @@ public sealed class SceneManager(EngineServiceContainer? services = null, WorldC
 
     private Entry BuildScene(ISceneBuilder builder, string name)
     {
-        World world = new(_configurator);
+        World world = new(_components, _configurator);
         Scene scene = new(name, world);
         try
         {

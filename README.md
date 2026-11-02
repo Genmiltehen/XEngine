@@ -22,12 +22,14 @@ BenchmarkDotNet — только в проекте бенчмарков.
 
 ```
 src/XEngine.Core/
-  Ecs/            EntityId, World, Archetype, ComponentMask, Column<T>, Query, CommandBuffer
+  Ecs/            EntityId, World, Archetype, ComponentRegistry, ComponentType, Query, CommandBuffer
   Hierarchy/      Node (иерархией владеет World)
   Transforms/     Transform2D, TransformSystem
   Systems/        ISystem, SystemPhase, SystemScheduler, WorldConfigurator
   Scenes/         ISceneBuilder, SceneBuildContext, Scene, SceneManager
-  Services/       EngineServices
+  Services/       EngineServiceContainer
+  Modules/        IEngineModule, CoreModule
+  Hosting/        Engine, EngineBuilder
   Time/           GameTime
 tests/XEngine.Core.Tests/
 benchmarks/XEngine.Core.Benchmarks/
@@ -148,6 +150,10 @@ dotnet run -c Release --project benchmarks/XEngine.Core.Benchmarks -- --filter "
 dotnet run -c Release --project benchmarks/XEngine.Core.Benchmarks -- --filter "*StructuralBenchmarks*"
 dotnet run -c Release --project benchmarks/XEngine.Core.Benchmarks -- --filter "*TransformBenchmarks*"
 ```
+
+> **TODO(benchmarks):** после перехода на `ComponentRegistry` замеры не перезапускались:
+> текущая машина не тянет BenchmarkDotNet, числа будут несопоставимы с таблицей ниже.
+> Повторить на машине из README и проверить резолв `T` в `World.Add<T>/Get<T>`.
 
 Замеры — ориентир для текущей машины, а не контракт. Контрольные значения с dev-машины
 (.NET 10.0.13, x64):

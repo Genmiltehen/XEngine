@@ -10,9 +10,9 @@ namespace XEngine.Core.Ecs;
 
 public sealed class World : IDisposable
 {
-    private static readonly ComponentMask NodeMask = ComponentMask.Empty.With(ComponentType<Node>.Id);
-
-    // Хранилище и системы
+    // Реестр и хранилище
+    private readonly ComponentType _nodeType;
+    private readonly ComponentMask _nodeMask;
     private readonly EntityStore _entities = new();
     private readonly Dictionary<ComponentMask, Archetype> _archetypes = [];
     private readonly List<Archetype> _archetypeList = [];
@@ -24,11 +24,18 @@ public sealed class World : IDisposable
     private bool _isUpdating;
     private bool _disposed;
 
-    public World(WorldConfigurator? configurator = null)
+    public World(WorldConfigurator? configurator = null) : this(new ComponentRegistry(), configurator) { }
+
+    public World(ComponentRegistry components, WorldConfigurator? configurator = null)
     {
+        ArgumentNullException.ThrowIfNull(components);
+        Components = components;
+        _nodeType = components.Get<Node>();
+        _nodeMask = ComponentMask.Empty.With(_nodeType.Id);
         (configurator ?? WorldConfigurators.Default)(this);
     }
 
+    public ComponentRegistry Components { get; }
     public int EntityCount => _entities.AliveCount;
     public int ArchetypeCount => _archetypes.Count;
     public GameTime Time { get; private set; }
@@ -40,7 +47,7 @@ public sealed class World : IDisposable
     {
         EnsureNotIterating();
         EntityId entity = _entities.Create();
-        PlaceEntity(entity, NodeMask);
+        PlaceEntity(entity, _nodeMask);
         return entity;
     }
 
@@ -128,15 +135,16 @@ public sealed class World : IDisposable
         if (typeof(T) == typeof(Node)) throw new InvalidOperationException("Node is owned by the world and cannot be added manually.");
         EnsureNotIterating();
         
+        ComponentType type = Components.Get<T>();
         ref EntityRecord sourceRecord = ref GetAliveRecord(entity);
         Archetype sourceArch = sourceRecord.Archetype!;
-        if (sourceArch.Mask.Has(ComponentType<T>.Id))
+        if (sourceArch.Mask.Has(type.Id))
         {
             sourceArch.GetColumn<T>()[sourceRecord.Row] = component;
             return;
         }
 
-        ComponentMask targetMask = sourceArch.Mask.With(ComponentType<T>.Id);
+        ComponentMask targetMask = sourceArch.Mask.With(type.Id);
         Archetype targetArch = GetOrCreateArchetype(targetMask);
         var targetRow = MoveEntity(entity, sourceArch, sourceRecord.Row, targetArch);
         targetArch.GetColumn<T>()[targetRow] = component;
@@ -147,20 +155,22 @@ public sealed class World : IDisposable
         if (typeof(T) == typeof(Node)) throw new InvalidOperationException("Node is owned by the world and cannot be removed.");
         EnsureNotIterating();
 
+        ComponentType type = Components.Get<T>();
         ref EntityRecord sourceRecord = ref GetAliveRecord(entity);
         Archetype sourceArch = sourceRecord.Archetype!;
-        if (!sourceArch.Mask.Has(ComponentType<T>.Id)) return;
+        if (!sourceArch.Mask.Has(type.Id)) return;
 
-        ComponentMask targetMask = sourceArch.Mask.Without(ComponentType<T>.Id);
+        ComponentMask targetMask = sourceArch.Mask.Without(type.Id);
         Archetype targetArch = GetOrCreateArchetype(targetMask);
         _ = MoveEntity(entity, sourceArch, sourceRecord.Row, targetArch);
     }
 
     public ref T Get<T>(EntityId entity) where T : struct, IComponent
     {
+        ComponentType type = Components.Get<T>();
         ref EntityRecord record = ref GetAliveRecord(entity);
         Archetype archetype = record.Archetype!;
-        if (!archetype.Mask.Has(ComponentType<T>.Id)) throw new InvalidOperationException($"Entity {entity} does not have component {ComponentType<T>.Instance.Name}.");
+        if (!archetype.Mask.Has(type.Id)) throw new InvalidOperationException($"Entity {entity} does not have component {type.Name}.");
         
         return ref archetype.GetColumn<T>()[record.Row];
     }
@@ -173,9 +183,10 @@ public sealed class World : IDisposable
             return false;
         }
 
+        ComponentType type = Components.Get<T>();
         ref EntityRecord record = ref _entities.GetRecord(entity.Index);
         Archetype archetype = record.Archetype!;
-        if (!archetype.Mask.Has(ComponentType<T>.Id))
+        if (!archetype.Mask.Has(type.Id))
         {
             component = default;
             return false;
@@ -185,7 +196,11 @@ public sealed class World : IDisposable
         return true;
     }
 
-    public bool Has<T>(EntityId entity) where T : struct, IComponent => _entities.IsAlive(entity) && _entities.GetRecord(entity.Index).Archetype!.Mask.Has(ComponentType<T>.Id);
+    public bool Has<T>(EntityId entity) where T : struct, IComponent
+    {
+        ComponentType type = Components.Get<T>();
+        return _entities.IsAlive(entity) && _entities.GetRecord(entity.Index).Archetype!.Mask.Has(type.Id);
+    }
 #endregion
 
 #region CommandBuffer
@@ -197,7 +212,7 @@ public sealed class World : IDisposable
 
     internal void ActivateReserved(EntityId entity, ComponentMask components)
     {
-        if (!components.Has(ComponentType<Node>.Id)) components = components.With(ComponentType<Node>.Id);
+        if (!components.Has(_nodeType.Id)) components = components.With(_nodeType.Id);
         PlaceEntity(entity, components);
         _entities.Activate(entity);
     }
@@ -216,9 +231,10 @@ public sealed class World : IDisposable
 
     internal void SetExisting<T>(EntityId entity, T component) where T : struct, IComponent
     {
+        ComponentType type = Components.Get<T>();
         ref EntityRecord record = ref GetAliveRecord(entity);
         Archetype archetype = record.Archetype!;
-        if (!archetype.Mask.Has(ComponentType<T>.Id)) throw new InvalidOperationException($"Entity {entity} does not have component {ComponentType<T>.Instance.Name}.");
+        if (!archetype.Mask.Has(type.Id)) throw new InvalidOperationException($"Entity {entity} does not have component {type.Name}.");
         archetype.GetColumn<T>()[record.Row] = component;
     }
 
@@ -237,16 +253,16 @@ public sealed class World : IDisposable
 
 #region Queries
     public Query<T1> Query<T1>()
-        where T1 : struct, IComponent => new(this, ComponentMask.Empty.With(ComponentType<T1>.Id));
+        where T1 : struct, IComponent => new(this, ComponentMask.Empty.With(Components.Get<T1>().Id));
 
     public Query<T1, T2> Query<T1, T2>()
         where T1 : struct, IComponent
-        where T2 : struct, IComponent => new(this, ComponentMask.Empty.With(ComponentType<T1>.Id).With(ComponentType<T2>.Id));
+        where T2 : struct, IComponent => new(this, ComponentMask.Empty.With(Components.Get<T1>().Id).With(Components.Get<T2>().Id));
 
     public Query<T1, T2, T3> Query<T1, T2, T3>()
         where T1 : struct, IComponent
         where T2 : struct, IComponent
-        where T3 : struct, IComponent => new(this, ComponentMask.Empty.With(ComponentType<T1>.Id).With(ComponentType<T2>.Id).With(ComponentType<T3>.Id));
+        where T3 : struct, IComponent => new(this, ComponentMask.Empty.With(Components.Get<T1>().Id).With(Components.Get<T2>().Id).With(Components.Get<T3>().Id));
 #endregion
 
 #region System Manipulation
@@ -448,7 +464,7 @@ public sealed class World : IDisposable
     {
         Archetype archetype = GetOrCreateArchetype(components);
         var row = archetype.AddEntity(entity);
-        if (components.Has(ComponentType<Node>.Id)) archetype.GetColumn<Node>()[row] = Node.New();
+        if (components.Has(_nodeType.Id)) archetype.GetColumn<Node>()[row] = Node.New();
         ref EntityRecord record = ref _entities.GetRecord(entity.Index);
         record.Archetype = archetype;
         record.Row = row;
@@ -487,7 +503,7 @@ public sealed class World : IDisposable
     private Archetype GetOrCreateArchetype(ComponentMask mask)
     {
         if (_archetypes.TryGetValue(mask, out Archetype? archetype)) return archetype;
-        archetype = new Archetype(mask);
+        archetype = new Archetype(mask, Components);
         _archetypes.Add(mask, archetype);
         _archetypeList.Add(archetype);
         return archetype;

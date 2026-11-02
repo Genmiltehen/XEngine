@@ -17,9 +17,9 @@ public readonly struct Query<T1, T2, T3>
         _without = without;
     }
 
-    public Query<T1, T2, T3> With<T>() where T : struct, IComponent => new(_world, _with.With(ComponentType<T>.Id), _without);
+    public Query<T1, T2, T3> With<T>() where T : struct, IComponent => new(_world, _with.With(_world.Components.Get<T>().Id), _without);
 
-    public Query<T1, T2, T3> Without<T>() where T : struct, IComponent => new(_world, _with, _without.With(ComponentType<T>.Id));
+    public Query<T1, T2, T3> Without<T>() where T : struct, IComponent => new(_world, _with, _without.With(_world.Components.Get<T>().Id));
 
     public void ForEach(QueryAction<T1, T2, T3> action)
     {

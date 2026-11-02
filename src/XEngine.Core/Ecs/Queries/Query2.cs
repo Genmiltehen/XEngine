@@ -18,11 +18,11 @@ public readonly struct Query<T1, T2> where T1 : struct, IComponent where T2 : st
 
     public Query<T1, T2> With<T>()
         where T : struct, IComponent =>
-        new(_world, _with.With(ComponentType<T>.Id), _without);
+        new(_world, _with.With(_world.Components.Get<T>().Id), _without);
 
     public Query<T1, T2> Without<T>()
         where T : struct, IComponent =>
-        new(_world, _with, _without.With(ComponentType<T>.Id));
+        new(_world, _with, _without.With(_world.Components.Get<T>().Id));
 
     public void ForEach(QueryAction<T1, T2> action)
     {
