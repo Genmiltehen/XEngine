@@ -35,7 +35,9 @@ internal sealed class Archetype
 
     public int IndexOf(int componentTypeId) => _columnIndices[componentTypeId];
 
-    public Column<T> GetColumn<T>() where T : struct, IComponent => (Column<T>)Columns[_columnIndices[_registry.Get<T>().Id]];
+    public Column<T> GetColumn<T>() where T : struct, IComponent => GetColumn<T>(_registry.Get<T>());
+
+    internal Column<T> GetColumn<T>(ComponentType type) where T : struct, IComponent => (Column<T>)Columns[_columnIndices[type.Id]];
 
     public int AddEntity(EntityId entity)
     {

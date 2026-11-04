@@ -140,14 +140,14 @@ public sealed class World : IDisposable
         Archetype sourceArch = sourceRecord.Archetype!;
         if (sourceArch.Mask.Has(type.Id))
         {
-            sourceArch.GetColumn<T>()[sourceRecord.Row] = component;
+            sourceArch.GetColumn<T>(type)[sourceRecord.Row] = component;
             return;
         }
 
         ComponentMask targetMask = sourceArch.Mask.With(type.Id);
         Archetype targetArch = GetOrCreateArchetype(targetMask);
         var targetRow = MoveEntity(entity, sourceArch, sourceRecord.Row, targetArch);
-        targetArch.GetColumn<T>()[targetRow] = component;
+        targetArch.GetColumn<T>(type)[targetRow] = component;
     }
 
     public void Remove<T>(EntityId entity) where T : struct, IComponent
@@ -165,14 +165,15 @@ public sealed class World : IDisposable
         _ = MoveEntity(entity, sourceArch, sourceRecord.Row, targetArch);
     }
 
-    public ref T Get<T>(EntityId entity) where T : struct, IComponent
+    public ref T Get<T>(EntityId entity) where T : struct, IComponent => ref Get<T>(entity, Components.Get<T>());
+
+    internal ref T Get<T>(EntityId entity, ComponentType type) where T : struct, IComponent
     {
-        ComponentType type = Components.Get<T>();
         ref EntityRecord record = ref GetAliveRecord(entity);
         Archetype archetype = record.Archetype!;
         if (!archetype.Mask.Has(type.Id)) throw new InvalidOperationException($"Entity {entity} does not have component {type.Name}.");
-        
-        return ref archetype.GetColumn<T>()[record.Row];
+
+        return ref archetype.GetColumn<T>(type)[record.Row];
     }
 
     public bool TryGet<T>(EntityId entity, out T component) where T : struct, IComponent
@@ -192,15 +193,14 @@ public sealed class World : IDisposable
             return false;
         }
         
-        component = archetype.GetColumn<T>()[record.Row];
+        component = archetype.GetColumn<T>(type)[record.Row];
         return true;
     }
 
-    public bool Has<T>(EntityId entity) where T : struct, IComponent
-    {
-        ComponentType type = Components.Get<T>();
-        return _entities.IsAlive(entity) && _entities.GetRecord(entity.Index).Archetype!.Mask.Has(type.Id);
-    }
+    public bool Has<T>(EntityId entity) where T : struct, IComponent => Has(entity, Components.Get<T>());
+
+    internal bool Has(EntityId entity, ComponentType type) =>
+        _entities.IsAlive(entity) && _entities.GetRecord(entity.Index).Archetype!.Mask.Has(type.Id);
 #endregion
 
 #region CommandBuffer
@@ -235,7 +235,7 @@ public sealed class World : IDisposable
         ref EntityRecord record = ref GetAliveRecord(entity);
         Archetype archetype = record.Archetype!;
         if (!archetype.Mask.Has(type.Id)) throw new InvalidOperationException($"Entity {entity} does not have component {type.Name}.");
-        archetype.GetColumn<T>()[record.Row] = component;
+        archetype.GetColumn<T>(type)[record.Row] = component;
     }
 
     public void Submit(CommandBuffer commands)
@@ -338,7 +338,7 @@ public sealed class World : IDisposable
     private ref Node GetNodeRef(EntityId entity)
     {
         ref EntityRecord record = ref GetAliveRecord(entity);
-        return ref record.Archetype!.GetColumn<Node>()[record.Row];
+        return ref record.Archetype!.GetColumn<Node>(_nodeType)[record.Row];
     }
 
     private bool IsDescendantOrSelf(EntityId candidate, EntityId ancestor)
@@ -464,7 +464,7 @@ public sealed class World : IDisposable
     {
         Archetype archetype = GetOrCreateArchetype(components);
         var row = archetype.AddEntity(entity);
-        if (components.Has(_nodeType.Id)) archetype.GetColumn<Node>()[row] = Node.New();
+        if (components.Has(_nodeType.Id)) archetype.GetColumn<Node>(_nodeType)[row] = Node.New();
         ref EntityRecord record = ref _entities.GetRecord(entity.Index);
         record.Archetype = archetype;
         record.Row = row;

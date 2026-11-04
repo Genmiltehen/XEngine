@@ -1,4 +1,5 @@
 using System.Collections.Frozen;
+using System.Runtime.CompilerServices;
 
 namespace XEngine.Core.Ecs;
 
@@ -63,14 +64,27 @@ public sealed class ComponentRegistry
         return false;
     }
 
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     internal ComponentType Get<T>() where T : struct, IComponent
     {
-        if (_frozenByType is not null && _frozenByType.TryGetValue(typeof(T), out ComponentType? type)) return type;
-        lock (_lock) return _byType.TryGetValue(typeof(T), out type)
-                ? type
-                : _frozen
-                ? throw new InvalidOperationException($"Component {typeof(T).FullName} is not registered. Register it in a module's ConfigureComponents.")
-                : RegisterCore<T>(typeof(T).FullName ?? typeof(T).Name);
+        return ReferenceEquals(Lookup<T>.Registry, this) && Lookup<T>.Type is not null ? Lookup<T>.Type : GetSlow<T>();
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private ComponentType GetSlow<T>() where T : struct, IComponent
+    {
+        ComponentType type;
+        if (_frozenByType is not null && _frozenByType.TryGetValue(typeof(T), out ComponentType? frozen)) type = frozen;
+        else
+            lock (_lock)
+                type = _byType.TryGetValue(typeof(T), out ComponentType? registered)
+                    ? registered
+                    : _frozen
+                    ? throw new InvalidOperationException($"Component {typeof(T).FullName} is not registered. Register it in a module's ConfigureComponents.")
+                    : RegisterCore<T>(typeof(T).FullName ?? typeof(T).Name);
+        Lookup<T>.Registry = this;
+        Lookup<T>.Type = type;
+        return type;
     }
 
     internal ComponentType Register<T>(string name) where T : struct, IComponent
@@ -87,6 +101,12 @@ public sealed class ComponentRegistry
             _frozenByType = _byType.ToFrozenDictionary();
             _frozenByName = _byName.ToFrozenDictionary(StringComparer.Ordinal);
             _frozen = true;
+    }
+
+    private static class Lookup<T> where T : struct, IComponent
+    {
+        [ThreadStatic] public static ComponentRegistry? Registry;
+        [ThreadStatic] public static ComponentType? Type;
     }
 
     private ComponentType RegisterCore<T>(string name) where T : struct, IComponent
