@@ -1,0 +1,45 @@
+{
+	"version": "2.0.0",
+	"tasks": [
+		{
+			"label": "build",
+			"command": "dotnet",
+			"type": "process",
+			"args": [
+				"build",
+				"${workspaceFolder}/XEngine.slnx",
+				"/property:GenerateFullPaths=true",
+				"/consoleloggerparameters:NoSummary;ForceNoAlign"
+			],
+			"problemMatcher": "$msCompile"
+		},
+		{
+			"label": "pack: XEngine.Core (Release -> local nuget)",
+			"command": "dotnet",
+			"type": "process",
+			"args": [
+				"pack",
+				"${workspaceFolder}/src/XEngine.Core/XEngine.Core.csproj",
+				"-c",
+				"Release",
+				"-o",
+				"${env:NUGET_LOCAL}"
+			],
+			"problemMatcher": "$msCompile"
+		},
+		{
+			"label": "pack: XEngine.Core (Debug -> local nuget)",
+			"command": "dotnet",
+			"type": "process",
+			"args": [
+				"pack",
+				"${workspaceFolder}/src/XEngine.Core/XEngine.Core.csproj",
+				"-c",
+				"Debug",
+				"-o",
+				"${env:NUGET_LOCAL}"
+			],
+			"problemMatcher": "$msCompile"
+		}
+	]
+}
