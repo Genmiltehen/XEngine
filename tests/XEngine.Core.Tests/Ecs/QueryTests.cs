@@ -1,4 +1,5 @@
 using XEngine.Core.Ecs;
+using XEngine.Core.Hierarchy;
 
 namespace XEngine.Core.Tests.Ecs;
 
@@ -118,6 +119,38 @@ public sealed class QueryTests
         List<int> values = [];
         world.Query<Health>().ForEach((ref Health health) => values.Add(health.Value));
         Assert.Equal(ExpectedValues, values);
+    }
+
+    [Fact]
+    public void EntityAt_ReturnsElementsInArchetypeOrder_AndHonorsFilters()
+    {
+        using var world = new World();
+        EntityId first = world.Create();
+        EntityId second = world.Create();
+        EntityId third = world.Create();
+        world.Add(first, new Health { Value = 1 });
+        world.Add(second, new Health { Value = 2 });
+        world.Add(second, new Velocity());
+        world.Add(third, new Health { Value = 3 });
+        world.Add(third, new TagA());
+
+        Assert.Equal(first, world.Query<Health>().EntityAt());
+        Assert.Equal(second, world.Query<Health>().EntityAt(1));
+        Assert.Equal(third, world.Query<Health>().EntityAt(2));
+        Assert.Equal(second, world.Query<Health>().With<Velocity>().EntityAt());
+        Assert.Equal(third, world.Query<Health>().Without<Velocity>().EntityAt(1));
+        Assert.Equal(second, world.Query<Health, Velocity, Node>().EntityAt());
+    }
+
+    [Fact]
+    public void EntityAt_OutOfRange_Throws()
+    {
+        using var world = new World();
+        world.Add(world.Create(), new Health());
+
+        Assert.Throws<ArgumentOutOfRangeException>(() => world.Query<Health>().EntityAt(-1));
+        Assert.Throws<ArgumentOutOfRangeException>(() => world.Query<Health>().EntityAt(1));
+        Assert.Throws<ArgumentOutOfRangeException>(() => world.Query<Velocity>().EntityAt());
     }
 
     [Fact]

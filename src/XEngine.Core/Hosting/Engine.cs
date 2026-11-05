@@ -17,6 +17,7 @@ public sealed class Engine : IDisposable
         Services = services;
         Scenes = new SceneManager(components, services, configurator);
         _modules = modules;
+        foreach (IEngineModule module in _modules) InvokeHook(module, nameof(IEngineModule.OnEngineCreated), () => module.OnEngineCreated(this));
     }
 
     public ComponentRegistry Components { get; }
@@ -29,9 +30,31 @@ public sealed class Engine : IDisposable
     {
         if (_disposed) return;
         _disposed = true;
-        Scenes.Dispose();
+        Exception? hookFailure = null;
         foreach (IEngineModule module in _modules)
-            if (module is IDisposable disposable) disposable.Dispose();
-        Services.Dispose();
+        {
+            try { module.OnEngineDisposing(this); }
+            catch (Exception exception) { hookFailure ??= WrapHookFailure(module, nameof(IEngineModule.OnEngineDisposing), exception); }
+        }
+        try
+        {
+            Scenes.Dispose();
+            foreach (IEngineModule module in _modules)
+                if (module is IDisposable disposable) disposable.Dispose();
+        }
+        finally
+        {
+            Services.Dispose();
+        }
+        if (hookFailure is not null) throw hookFailure;
     }
+
+    private static void InvokeHook(IEngineModule module, string hook, Action action)
+    {
+        try { action(); }
+        catch (Exception exception) { throw WrapHookFailure(module, hook, exception); }
+    }
+
+    private static InvalidOperationException WrapHookFailure(IEngineModule module, string hook, Exception exception) =>
+        new($"Module {module.GetType().Name} failed in {hook}.", exception);
 }

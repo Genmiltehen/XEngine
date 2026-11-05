@@ -111,6 +111,10 @@ standalone-сценариев `new World()`/`new SceneManager()` создают 
 - Обход запросов — только `world.Query<...>().ForEach(...)`. `foreach` по результатам
   запроса не предусмотрен: `ForEach` даёт `ref`-доступ к колонкам без аллокаций.
 - Фильтры: `With<T>()` и `Without<T>()`.
+- `Query<...>.EntityAt(int index = 0)` возвращает i-ю подходящую сущность без полного
+  обхода запроса. Индекс считается по архетипам в порядке создания; выход за границы
+  бросает `ArgumentOutOfRangeException`. Удобно для поиска камеры и других одиночных
+  сущностей.
 - Структурные изменения во время `ForEach` запрещены. В Debug они бросают
   `InvalidOperationException`, в Release проверка не компилируется. Для изменений есть
   `CommandBuffer`:
@@ -133,6 +137,15 @@ world.Submit(commands);
   `ComponentType.Id`, хранит имя и CLR-тип и создаёт колонки без рефлексии.
 - Регистрация выполняется в `IEngineModule.ConfigureComponents`. `EngineBuilder` вызывает
   все модули, замораживает реестр, затем настраивает сервисы и создаёт `SceneManager`.
+- `IEngineModule.OnEngineCreated(Engine)` вызывается один раз в конструкторе `Engine`
+  после создания `SceneManager`: сервисы уже доступны, сцен ещё нет. Хук предназначен для
+  ресурсов, которым нужен живой `Engine` (окно, GL-контекст, ввод), и не заменяет
+  `ISystem` для кадровой работы.
+- `IEngineModule.OnEngineDisposing(Engine)` вызывается один раз в начале `Engine.Dispose`
+  до `SceneManager.Dispose`, `IDisposable`-модулей и `EngineServiceContainer.Dispose`.
+  Исключение в хуке оборачивается в `InvalidOperationException`, но очистка сцен, модулей
+  и сервисов всё равно выполняется. При падении `OnEngineCreated` `EngineBuilder.Build`
+  освобождает уже созданные сервисы, поэтому платформенные ресурсы нужно хранить в них.
 - После заморозки новый тип зарегистрировать нельзя, а `World.Add<T>/Get<T>/Has<T>` для
   незарегистрированного `T` бросает `InvalidOperationException`.
 - `World.Add<T>/Get<T>/Has<T>` резолвят дескриптор через `World.Components`; статической
@@ -197,6 +210,7 @@ world.Submit(commands);
 dotnet run -c Release --project benchmarks/XEngine.Core.Benchmarks -- --filter "*QueryBenchmarks*"
 dotnet run -c Release --project benchmarks/XEngine.Core.Benchmarks -- --filter "*QueryCallBenchmarks*"
 dotnet run -c Release --project benchmarks/XEngine.Core.Benchmarks -- --filter "*StructuralBenchmarks*"
+dotnet run -c Release --project benchmarks/XEngine.Core.Benchmarks -- --filter "*ReparentBenchmarks*"
 dotnet run -c Release --project benchmarks/XEngine.Core.Benchmarks -- --filter "*TransformBenchmarks*"
 ```
 
@@ -204,9 +218,12 @@ dotnet run -c Release --project benchmarks/XEngine.Core.Benchmarks -- --filter "
 > AMD Ryzen 7 7800X3D (16 logical / 8 physical cores), Linux CachyOS,
 > .NET SDK 10.0.114, runtime 10.0.14, x64 RyuJIT.
 >
-> **TODO:** числа ниже не перемерялись на текущей машине. Нужны повторные прогоны
-> `TransformBenchmarks`, `StructuralBenchmarks` и `SetParent` с подписчиком
-> `BeforeReparent` и без; актуальный список задач — в `docs/plans.md`.
+> `StructuralBenchmarks` и `ReparentBenchmarks` перемерены 5 ноября 2026.
+> `TransformBenchmarks` после выноса трансформов создавал `new World()` без
+> `TransformWorldConfigurator.Default`, поэтому измерял пустую фазу (≈1 ns/вызов).
+> Бенчмарк исправлен, но повторный прогон не запускался: расхождение с числами ниже
+> объясняется отсутствием `TransformSystem`, а не ускорением. Для актуальных значений
+> нужен один прогон `*TransformBenchmarks*`.
 
 Обход запросов (0 B на операцию):
 
@@ -224,13 +241,21 @@ dotnet run -c Release --project benchmarks/XEngine.Core.Benchmarks -- --filter "
 
 | Сценарий | Стоимость |
 | --- | ---: |
-| Create + Destroy | 22.96 ns |
-| Add + Remove компонента | 55.49 ns |
-| Reparent + detach | 48.78 ns |
-| CommandBuffer create + destroy | 106.46 ns, 379 B |
-| Построить цепь и удалить рекурсивно | 3.35 µs |
+| Create + Destroy | 26.54 ns |
+| Add + Remove компонента | 54.08 ns |
+| Reparent + detach | 60.92 ns |
+| CommandBuffer create + destroy | 115.15 ns, 371 B |
+| Построить цепь и удалить рекурсивно | 3.48 µs |
 
-Полный пересчёт трансформов (0 B):
+Стоимость подписки `BeforeReparent` (1 000 reparent + detach, на операцию, 0 B):
+
+| Подписчик | Стоимость |
+| --- | ---: |
+| Нет | 60.54 ns |
+| Пустой обработчик | 61.18 ns |
+
+Полный пересчёт трансформов (0 B, исторические значения до выноса `TransformSystem`;
+требуется повторный прогон после исправления бенчмарка):
 
 | Сущностей | Flat | Chain | BinaryTree |
 | ---: | ---: | ---: | ---: |
@@ -244,8 +269,10 @@ dotnet run -c Release --project benchmarks/XEngine.Core.Benchmarks -- --filter "
 - `TransformSystem` — самая дорогая часть кадра: на сущность приходится несколько
   обращений к `World` плюс обход иерархии. Он разрешает `ComponentType` один раз за
   кадр; следующий кандидат — dirty-поддеревья или кэш колонок на время обхода.
-- `CommandBuffer` аллоцирует группу команд на сущность. Если буфер станет горячим,
-  понадобится пул.
+- `CommandBuffer` аллоцирует группу команд на сущность (~371 B). Если буфер станет
+  горячим, понадобится пул.
+- Пустой подписчик `BeforeReparent` добавляет ~0.6 ns к операции reparent+detach (<1% от
+  стоимости `SetParent`) и не аллоцирует; event-хук не является узким местом.
 - `SetParent` проверяет цикл проходом вверх по родителям, поэтому построение очень
   глубокой цепи квадратично по глубине. Для обычных деревьев глубина мала, но это
   ограничение нужно помнить.

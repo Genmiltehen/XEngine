@@ -19,7 +19,7 @@ public class TransformBenchmarks : IDisposable
     [GlobalSetup]
     public void Setup()
     {
-        _world = new World();
+        _world = new World(TransformWorldConfigurator.Default);
         EntityId[] entities = new EntityId[EntityCount];
         for (int i = 0; i < EntityCount; i++)
         {

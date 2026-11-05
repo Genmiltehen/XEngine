@@ -41,7 +41,15 @@ public sealed class EngineBuilder
             foreach (IEngineModule module in _modules) Configure(module, nameof(IEngineModule.ConfigureWorld), () => module.ConfigureWorld(world));
         }
 
-        return new Engine(_components, services, configurator, [.. _modules]);
+        try
+        {
+            return new Engine(_components, services, configurator, [.. _modules]);
+        }
+        catch
+        {
+            services.Dispose();
+            throw;
+        }
     }
 
     private static void Configure(IEngineModule module, string phase, Action configure)

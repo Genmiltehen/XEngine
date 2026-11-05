@@ -20,15 +20,18 @@ public sealed class EngineBuilderTests
 
         using Engine engine = new EngineBuilder(registry).AddModule(module).Build();
 
-        Assert.Equal(["components", "services"], events);
+        Assert.Equal(["components", "services", "created"], events);
         Assert.True(module.RegistryFrozenBeforeServices);
+        Assert.True(module.ServicesAvailableInOnEngineCreated);
+        Assert.True(module.ScenesEmptyInOnEngineCreated);
+        Assert.Equal(1, module.CreatedHookCalls);
         Assert.True(registry.IsFrozen);
         Assert.Same(registry, engine.Components);
 
         engine.Scenes.Replace(new TestBuilder(_ => { }), "test");
         engine.Update(0f);
 
-        Assert.Equal(["components", "services", "world"], events);
+        Assert.Equal(["components", "services", "created", "world"], events);
         Assert.Same(registry, module.WorldComponents);
     }
 
@@ -72,19 +75,57 @@ public sealed class EngineBuilderTests
     }
 
     [Fact]
-    public void Dispose_DisposesScenesThenModulesThenServices()
+    public void Dispose_RunsOnEngineDisposingThenScenesModulesAndServices_OnlyOnce()
     {
         List<string> events = [];
         var module = new DisposableModule(events);
         Engine engine = new EngineBuilder().AddModule(module).Build();
-        engine.Scenes.Replace(new TestBuilder(_ => { }), "test");
+        var sceneResource = new DisposableResource(events);
+        engine.Scenes.Replace(new TestBuilder(context => context.World.SetResource(sceneResource)), "test");
         engine.Update(0f);
 
+        engine.Dispose();
         engine.Dispose();
 
         Assert.True(module.Disposed);
         Assert.True(module.Service.Disposed);
-        Assert.Equal(["module", "service"], events);
+        Assert.True(module.ServicesAvailableInOnEngineDisposing);
+        Assert.True(sceneResource.Disposed);
+        Assert.Equal(["disposing", "scene", "module", "service"], events);
+        Assert.Equal(1, module.DisposeHookCalls);
+    }
+
+    [Fact]
+    public void Dispose_OnEngineDisposingFailure_StillReleasesScenesModulesAndServices()
+    {
+        List<string> events = [];
+        var module = new FailingDisposingModule(events);
+        Engine engine = new EngineBuilder().AddModule(module).Build();
+        var sceneResource = new DisposableResource(events);
+        engine.Scenes.Replace(new TestBuilder(context => context.World.SetResource(sceneResource)), "test");
+        engine.Update(0f);
+
+        var exception = Assert.Throws<InvalidOperationException>(() => engine.Dispose());
+
+        Assert.Contains("FailingDisposingModule failed in OnEngineDisposing", exception.Message);
+        Assert.IsType<NotSupportedException>(exception.InnerException);
+        Assert.True(sceneResource.Disposed);
+        Assert.True(module.Disposed);
+        Assert.True(module.Service.Disposed);
+        Assert.Throws<ObjectDisposedException>(() => engine.Services.Get<DisposableService>());
+    }
+
+    [Fact]
+    public void Build_OnEngineCreatedFailure_DisposesServicesAndWraps()
+    {
+        var module = new FailingCreatedModule();
+        var exception = Assert.Throws<InvalidOperationException>(() => new EngineBuilder()
+            .AddModule(module)
+            .Build());
+
+        Assert.Contains("FailingCreatedModule failed in OnEngineCreated", exception.Message);
+        Assert.IsType<NotSupportedException>(exception.InnerException);
+        Assert.True(module.Service.Disposed);
     }
 
     [Fact]
@@ -116,7 +157,11 @@ public sealed class EngineBuilderTests
     private sealed class RecordingModule(List<string> events, ComponentRegistry registry) : IEngineModule
     {
         public bool RegistryFrozenBeforeServices { get; private set; }
+        public bool ServicesAvailableInOnEngineCreated { get; private set; }
+        public bool ScenesEmptyInOnEngineCreated { get; private set; }
+        public int CreatedHookCalls { get; private set; }
         public ComponentRegistry? WorldComponents { get; private set; }
+        public MarkerService Service { get; } = new();
 
         public void ConfigureComponents(ComponentRegisterContext context)
         {
@@ -127,7 +172,16 @@ public sealed class EngineBuilderTests
         public void ConfigureServices(EngineServiceContainer services)
         {
             events.Add("services");
+            services.Set(Service);
             RegistryFrozenBeforeServices = registry.IsFrozen;
+        }
+
+        public void OnEngineCreated(Engine engine)
+        {
+            CreatedHookCalls++;
+            events.Add("created");
+            ServicesAvailableInOnEngineCreated = ReferenceEquals(engine.Services.Get<MarkerService>(), Service);
+            ScenesEmptyInOnEngineCreated = engine.Scenes.Current is null;
         }
 
         public void ConfigureWorld(World world)
@@ -140,9 +194,43 @@ public sealed class EngineBuilderTests
     private sealed class DisposableModule(List<string> events) : IEngineModule, IDisposable
     {
         public bool Disposed { get; private set; }
+        public bool ServicesAvailableInOnEngineDisposing { get; private set; }
+        public int DisposeHookCalls { get; private set; }
         public DisposableService Service { get; } = new(events);
 
         public void ConfigureServices(EngineServiceContainer services) => services.Set(Service);
+
+        public void OnEngineDisposing(Engine engine)
+        {
+            DisposeHookCalls++;
+            events.Add("disposing");
+            ServicesAvailableInOnEngineDisposing = engine.Services.TryGet<DisposableService>(out _);
+        }
+
+        public void Dispose()
+        {
+            Disposed = true;
+            events.Add("module");
+        }
+    }
+
+    private sealed class FailingCreatedModule : IEngineModule
+    {
+        public DisposableService Service { get; } = new([]);
+
+        public void ConfigureServices(EngineServiceContainer services) => services.Set(Service);
+
+        public void OnEngineCreated(Engine engine) => throw new NotSupportedException("broken");
+    }
+
+    private sealed class FailingDisposingModule(List<string> events) : IEngineModule, IDisposable
+    {
+        public bool Disposed { get; private set; }
+        public DisposableService Service { get; } = new(events);
+
+        public void ConfigureServices(EngineServiceContainer services) => services.Set(Service);
+
+        public void OnEngineDisposing(Engine engine) => throw new NotSupportedException("broken");
 
         public void Dispose()
         {
@@ -161,6 +249,19 @@ public sealed class EngineBuilderTests
             events.Add("service");
         }
     }
+
+    private sealed class DisposableResource(List<string> events) : IDisposable
+    {
+        public bool Disposed { get; private set; }
+
+        public void Dispose()
+        {
+            Disposed = true;
+            events.Add("scene");
+        }
+    }
+
+    private sealed class MarkerService { }
 
     private sealed class ThrowingModule : IEngineModule
     {

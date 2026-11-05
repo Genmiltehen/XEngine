@@ -253,6 +253,17 @@ public sealed class World : IDisposable
 
     internal ArchetypeFilter FilterArchetypes(ComponentMask with, ComponentMask without) => new(_archetypeList, with, without);
 
+    internal EntityId EntityAt(ComponentMask with, ComponentMask without, int index)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegative(index);
+        foreach (Archetype archetype in FilterArchetypes(with, without))
+        {
+            if (index < archetype.Count) return archetype.Entities[index];
+            index -= archetype.Count;
+        }
+        throw new ArgumentOutOfRangeException(nameof(index), "Query does not contain an entity at the requested index.");
+    }
+
     internal void BeginIteration() => _iterationDepth++;
     internal void EndIteration() => _iterationDepth--;
 

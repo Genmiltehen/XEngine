@@ -342,9 +342,8 @@ world.Add(entity, new Camera2D { ViewPort = new Vector2(16, 9), Zoom = 1 })
 
 `Transform2D.World` обновляется `TransformSystem` в `Transform`-фазе.
 `Camera2D` не является сервисом и не кладётся в ресурсы. Если камер несколько,
-берётся первая; для sample этого достаточно. После появления `Query<...>.Take(0)`
-(или `At(0)`) камера берётся им; до этого — первый элемент запроса. См. TODO в
-`docs/plans.md`.
+берётся первая через `Query<Transform2D, Camera2D>().EntityAt(0)`; для sample
+этого достаточно.
 
 `Transform2D.Scale` камеры держать `(1, 1)`, а зум задавать через `Zoom`. Иначе
 два источника масштаба будут конфликтовать.

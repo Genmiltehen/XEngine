@@ -128,4 +128,6 @@ public readonly struct Query<T1, T2> where T1 : struct, IComponent where T2 : st
         foreach (Archetype archetype in _world.FilterArchetypes(_with, _without)) count += archetype.Count;
         return count;
     }
+
+    public EntityId EntityAt(int index = 0) => _world.EntityAt(_with, _without, index);
 }
