@@ -14,32 +14,44 @@
 			"problemMatcher": "$msCompile"
 		},
 		{
-			"label": "pack: XEngine.Core (Release -> local nuget)",
+			"label": "pack: XEngine.Core",
 			"command": "dotnet",
 			"type": "process",
 			"args": [
 				"pack",
 				"${workspaceFolder}/src/XEngine.Core/XEngine.Core.csproj",
 				"-c",
-				"Release",
+				"${input:selectPackType}",
 				"-o",
 				"${env:NUGET_LOCAL}"
 			],
 			"problemMatcher": "$msCompile"
 		},
 		{
-			"label": "pack: XEngine.Core (Debug -> local nuget)",
+			"label": "pack: all",
 			"command": "dotnet",
 			"type": "process",
 			"args": [
 				"pack",
-				"${workspaceFolder}/src/XEngine.Core/XEngine.Core.csproj",
+				"${workspaceFolder}/XEngine.slnx",
 				"-c",
-				"Debug",
+				"${input:selectPackType}",
 				"-o",
 				"${env:NUGET_LOCAL}"
 			],
 			"problemMatcher": "$msCompile"
+		}
+	],
+	"inputs": [
+		{
+			"id": "selectPackType",
+			"type": "pickString",
+			"description": "pack type:",
+			"options": [
+				"Release",
+				"Debug"
+			],
+			"default": "development"
 		}
 	]
 }
