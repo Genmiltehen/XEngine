@@ -1,7 +1,7 @@
 # Legacy reference archive
 
-Local-only archive of the pre-ECS `XEngine` prototype. It is **not** part of
-`XEngine.slnx`, is not compiled, and is ignored by git.
+Reference archive of the pre-ECS `XEngine` prototype. It is **not** part of
+`XEngine.slnx`, is not compiled, and is kept only for porting ideas.
 
 Full original sources and assets are available in git history at commit
 `3ac02cd` (`init`), e.g.:

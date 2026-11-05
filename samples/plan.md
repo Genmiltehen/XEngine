@@ -6,7 +6,7 @@
 
 Связанные документы:
 
-- `docs/plans.md` — lifecycle-хуки `Engine`.
+- `docs/TODO.md` — текущие планы, включая lifecycle-хуки `Engine`.
 - `legacy/Input` — исходная логика действий, осей и edge detection.
 - `legacy/Shaders` — старые GLSL-шейдеры, не обязательны к переносу.
 - GunFight, `XEngine/Graphics/OpenGL` — референс по `Shader`, `UnitQuad`,
@@ -36,7 +36,7 @@
 
 ## 2. Зависимость от Core
 
-Проект опирается на lifecycle-хуки из `docs/plans.md`:
+Проект опирается на lifecycle-хуки из `docs/TODO.md`:
 
 - `IEngineModule.OnEngineCreated(Engine engine)`;
 - `IEngineModule.OnEngineDisposing(Engine engine)`.
@@ -611,7 +611,7 @@ ECS-компонент круга и instanced draw.
 
 ## 12. Порядок работ
 
-1. Добавить lifecycle-хуки в Core, тесты, обновить `docs/plans.md`.
+1. Добавить lifecycle-хуки в Core, тесты, обновить `docs/TODO.md`.
 2. Создать `samples/XEngine.Interactive.csproj`, добавить в `XEngine.slnx`.
 3. Реализовать `SilkTestOptions`, `SilkGraphicsService`, `Program.cs`.
 4. Перенести/адаптировать `Shader` и `UnitQuad` с учётом Silk.NET API.
