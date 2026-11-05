@@ -361,6 +361,3 @@ MigrationBackup/
 
 # Fody - auto-generated XML schema
 FodyWeavers.xsd
-
-# Local archive of the pre-ECS prototype (reference only, not part of the engine)
-/legacy/
