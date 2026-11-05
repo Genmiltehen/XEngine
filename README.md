@@ -22,7 +22,7 @@ BenchmarkDotNet — только в проекте бенчмарков.
 
 ```
 src/XEngine.Core/
-  Ecs/            EntityId, World, Archetype, ComponentRegistry, ComponentType, Query, CommandBuffer
+  Ecs/            EntityId, World, Archetype, ComponentRegistry, ComponentRegisterContext, ComponentType, Query, CommandBuffer
   Hierarchy/      Node (иерархией владеет World)
   Transforms/     Transform2D, TransformSystem
   Systems/        ISystem, SystemPhase, SystemScheduler, WorldConfigurator
@@ -33,7 +33,7 @@ src/XEngine.Core/
   Time/           GameTime
 tests/XEngine.Core.Tests/
 benchmarks/XEngine.Core.Benchmarks/
-docs/plans.md      архитектурные решения и оставшиеся задачи
+docs/plans.md      оставшиеся задачи и будущие подсистемы
 docs/code-style.md конвенция оформления кода
 ```
 
@@ -42,6 +42,8 @@ docs/code-style.md конвенция оформления кода
 ```csharp
 using System.Numerics;
 using XEngine.Core.Ecs;
+using XEngine.Core.Hosting;
+using XEngine.Core.Modules;
 using XEngine.Core.Scenes;
 using XEngine.Core.Systems;
 using XEngine.Core.Transforms;
@@ -49,6 +51,12 @@ using XEngine.Core.Transforms;
 struct Velocity : IComponent
 {
     public Vector2 Value;
+}
+
+sealed class GameModule : IEngineModule
+{
+    public void ConfigureComponents(ComponentRegisterContext context) =>
+        context.Register<Velocity>("game.Velocity");
 }
 
 sealed class MovementSystem : ISystem
@@ -71,15 +79,22 @@ sealed class Level : ISceneBuilder
     }
 }
 
-using var scenes = new SceneManager();
-scenes.Replace(new Level(), "level");
+using Engine engine = new EngineBuilder()
+    .AddModule(new GameModule())
+    .Build();
 
-while (running) scenes.Update(dt);
+engine.Scenes.Replace(new Level(), "level");
+
+while (running) engine.Update(dt);
 ```
 
-`SceneManager.Update` сам применяет отложенные переходы, обновляет только верхнюю сцену и
-пересчитывает трансформы в конце кадра. Цикл приложения и расчёт `dt` — задача будущего
-runtime-слоя.
+Компоненты регистрируются один раз в модуле и замораживаются до создания миров. Для тестов и
+standalone-сценариев `new World()`/`new SceneManager()` создают локальный незамороженный
+реестр: недостающие типы регистрируются при первом обращении.
+
+`Engine.Update` вызывает `SceneManager.Update`, который сам применяет отложенные переходы,
+обновляет только верхнюю сцену и пересчитывает трансформы в конце кадра. Цикл приложения и
+расчёт `dt` — задача будущего runtime-слоя.
 
 ## ECS
 
@@ -105,6 +120,24 @@ world.Submit(commands);
 
 `CommandBuffer` схлопывает операции по сущности, умеет создавать и уничтожать сущности,
 переподвешивать их и сохранять мировую трансформацию.
+
+## Реестр компонентов и модули
+
+- `ComponentRegistry` один на движок и общий для всех миров и сцен. Он выдаёт
+  `ComponentType.Id`, хранит имя и CLR-тип и создаёт колонки без рефлексии.
+- Регистрация выполняется в `IEngineModule.ConfigureComponents`. `EngineBuilder` вызывает
+  все модули, замораживает реестр, затем настраивает сервисы и создаёт `SceneManager`.
+- После заморозки новый тип зарегистрировать нельзя, а `World.Add<T>/Get<T>/Has<T>` для
+  незарегистрированного `T` бросает `InvalidOperationException`.
+- `World.Add<T>/Get<T>/Has<T>` резолвят дескриптор через `World.Components`; статической
+  авторегистрации в `ComponentType<T>` больше нет.
+- `ComponentRegistry.Get<T>()` держит горячий `[ThreadStatic]`-кэш в маленьком
+  inline-методе; холодный поиск/регистрация вынесены в `NoInlining`, чтобы не раздувать
+  вызывающие query-методы и сохранять инлайнинг `ForEach`.
+- Имена компонентов стабильны и сохраняются в сценах; числовые `Id` не сохраняются, потому
+  что порядок регистрации модулей может измениться.
+- Production-путь — `EngineBuilder`/`Engine` с общим замороженным реестром. `new World()` и
+  `new SceneManager()` создают локальный незамороженный реестр для тестов и standalone.
 
 ## Иерархия и трансформы
 
@@ -151,32 +184,55 @@ dotnet run -c Release --project benchmarks/XEngine.Core.Benchmarks -- --filter "
 dotnet run -c Release --project benchmarks/XEngine.Core.Benchmarks -- --filter "*TransformBenchmarks*"
 ```
 
-> **TODO(benchmarks):** после перехода на `ComponentRegistry` замеры не перезапускались:
-> текущая машина не тянет BenchmarkDotNet, числа будут несопоставимы с таблицей ниже.
-> Повторить на машине из README и проверить резолв `T` в `World.Add<T>/Get<T>`.
+> Замеры — ориентир для текущей машины, а не контракт. Последний прогон:
+> AMD Ryzen 7 7800X3D (16 logical / 8 physical cores), Linux CachyOS,
+> .NET SDK 10.0.114, runtime 10.0.14, x64 RyuJIT.
 
-Замеры — ориентир для текущей машины, а не контракт. Контрольные значения с dev-машины
-(.NET 10.0.13, x64):
+Обход запросов (0 B на операцию):
+
+| Запрос | 10 000 сущностей | 100 000 сущностей |
+| --- | ---: | ---: |
+| 1 компонент | 8.93 µs | 85.15 µs |
+| 2 компонента | 6.50 µs | 67.38 µs |
+| 3 компонента | 12.68 µs | 129.84 µs |
+| С фильтром `Without<Health>` | 4.32 µs | 42.31 µs |
+| `Count()` | 9.9 ns | 9.9 ns |
+
+Вызов запроса: пустой — 6.0 ns, по одной сущности — 9.7 ns.
+
+Структурные операции (на операцию, 0 B):
 
 | Сценарий | Стоимость |
-| --- | --- |
-| Обход 100 000 сущностей, 1–3 компонента | 60–130 µs, 0 B |
-| Обход 10 000 сущностей | 4–13 µs, 0 B |
-| Вызов пустого запроса | ~5.7 ns, 0 B |
-| Вызов запроса по одной сущности | ~8.7 ns, 0 B |
-| Create + Destroy | ~23 ns на операцию, 0 B |
-| Add + Remove компонента | ~54 ns на операцию, 0 B |
-| Reparent + detach | ~43 ns на операцию, 0 B |
-| CommandBuffer create + destroy | ~103 ns и ~370 B на операцию |
-| Полный пересчёт трансформов | ~60 ns на сущность |
+| --- | ---: |
+| Create + Destroy | 22.96 ns |
+| Add + Remove компонента | 55.49 ns |
+| Reparent + detach | 48.78 ns |
+| CommandBuffer create + destroy | 106.46 ns, 379 B |
+| Построить цепь и удалить рекурсивно | 3.35 µs |
+
+Полный пересчёт трансформов (0 B):
+
+| Сущностей | Flat | Chain | BinaryTree |
+| ---: | ---: | ---: | ---: |
+| 1 000 | 51.75 µs | 77.20 µs | 72.88 µs |
+| 10 000 | 511.19 µs | 789.52 µs | 754.49 µs |
+
+Сравнение с `aa27cbb` (до перехода на `ComponentRegistry`) на той же машине:
+структурные операции и вызовы запросов остались на уровне baseline, трансформы
+после разрешения `ComponentType` один раз за кадр — на уровне baseline или немного
+быстрее. Просадку в горячих путях устранили `[ThreadStatic]`-кэш резолва, передача
+уже разрешённого типа в `World`/`Archetype` и разделение резолва на inline-быстрый
+путь и `NoInlining`-регистрацию: это сохраняет инлайнинг `ForEach`, поэтому
+`Filtered` снова на уровне baseline (`4.32 µs` против `4.19 µs` при 10 000
+сущностей).
 
 Выводы:
 
 - Обход запросов и структурные операции не аллоцируют; стоимость линейна по числу
   сущностей.
 - `TransformSystem` — самая дорогая часть кадра: на сущность приходится несколько
-  обращений к `World` плюс обход иерархии. Следующий кандидат на оптимизацию —
-  dirty-поддеревья или кэширование колонок на время обхода.
+  обращений к `World` плюс обход иерархии. Он разрешает `ComponentType` один раз за
+  кадр; следующий кандидат — dirty-поддеревья или кэш колонок на время обхода.
 - `CommandBuffer` аллоцирует группу команд на сущность. Если буфер станет горячим,
   понадобится пул.
 - `SetParent` проверяет цикл проходом вверх по родителям, поэтому построение очень
