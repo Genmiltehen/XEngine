@@ -5,6 +5,7 @@ using XEngine.Core.Scenes;
 using XEngine.Core.Services;
 using XEngine.Core.Systems;
 using XEngine.Core.Tests.Ecs;
+using XEngine.Common.Transform;
 
 namespace XEngine.Core.Tests.Hosting;
 
@@ -40,14 +41,34 @@ public sealed class EngineBuilderTests
     }
 
     [Fact]
-    public void Build_DefaultBuilder_RegistersCoreComponents()
+    public void Build_DefaultBuilder_RegistersOnlyCoreComponents()
     {
         using Engine engine = new EngineBuilder().Build();
 
         Assert.True(engine.Components.IsFrozen);
-        Assert.Equal(2, engine.Components.Count);
+        Assert.Equal(1, engine.Components.Count);
         Assert.Equal("core.Node", engine.Components.GetById(0).Name);
-        Assert.Equal("core.Transform2D", engine.Components.GetById(1).Name);
+    }
+
+    [Fact]
+    public void Build_TransformModule_RegistersAndUpdatesTransforms()
+    {
+        using Engine engine = new EngineBuilder().AddModule(new TransformModule()).Build();
+        Assert.Equal(2, engine.Components.Count);
+        Assert.True(engine.Components.TryGet("transform.Transform2D", out ComponentType transform));
+        Assert.Equal(typeof(Transform2D), transform.RuntimeType);
+
+        EntityId entity = default;
+        engine.Scenes.Replace(new TestBuilder(context =>
+        {
+            entity = context.World.Create();
+            context.World.Add(entity, Transform2D.At(new System.Numerics.Vector2(3, 4)));
+        }), "test");
+        engine.Update(0f);
+
+        Assert.Equal(
+            new System.Numerics.Vector2(3, 4),
+            System.Numerics.Vector2.Transform(System.Numerics.Vector2.Zero, engine.Scenes.Current!.World.Get<Transform2D>(entity).World));
     }
 
     [Fact]
@@ -89,7 +110,7 @@ public sealed class EngineBuilderTests
 
         var exception = Assert.Throws<InvalidOperationException>(() => engine.Update(0f));
         Assert.Contains("not registered", exception.Message);
-        Assert.Equal(2, engine.Components.Count);
+        Assert.Equal(1, engine.Components.Count);
     }
 
     private sealed class RecordingModule(List<string> events, ComponentRegistry registry) : IEngineModule

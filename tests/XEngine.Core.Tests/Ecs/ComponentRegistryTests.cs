@@ -1,6 +1,7 @@
 using XEngine.Core.Ecs;
 using XEngine.Core.Hosting;
 using XEngine.Core.Modules;
+using XEngine.Common.Transform;
 
 namespace XEngine.Core.Tests.Ecs;
 
@@ -15,26 +16,32 @@ public sealed class ComponentRegistryTests
             .Build();
 
         Assert.True(registry.IsFrozen);
-        Assert.Equal(3, registry.Count);
+        Assert.Equal(2, registry.Count);
 
         ComponentType node = registry.GetById(0);
         Assert.Equal("core.Node", node.Name);
         Assert.Equal(typeof(XEngine.Core.Hierarchy.Node), node.RuntimeType);
 
-        ComponentType transform = registry.GetById(1);
-        Assert.Equal("core.Transform2D", transform.Name);
-        Assert.Equal(typeof(XEngine.Core.Transforms.Transform2D), transform.RuntimeType);
-
-        ComponentType health = registry.GetById(2);
+        ComponentType health = registry.GetById(1);
         Assert.Equal("game.Health", health.Name);
         Assert.Equal(typeof(Health), health.RuntimeType);
-        Assert.Equal([node, transform, health], registry.Types);
+        Assert.Equal([node, health], registry.Types);
 
         Assert.True(registry.TryGet("game.Health", out ComponentType byName));
         Assert.Same(health, byName);
 
         Assert.True(registry.TryGet<Health>(out ComponentType byType));
         Assert.Same(health, byType);
+    }
+
+    [Fact]
+    public void TransformModule_RegistersTransformComponent()
+    {
+        using Engine engine = new EngineBuilder().AddModule(new TransformModule()).Build();
+
+        Assert.Equal(2, engine.Components.Count);
+        Assert.True(engine.Components.TryGet("transform.Transform2D", out ComponentType transform));
+        Assert.Equal(typeof(Transform2D), transform.RuntimeType);
     }
 
     [Fact]
@@ -83,7 +90,7 @@ public sealed class ComponentRegistryTests
             .Build();
 
         Assert.Same(first, second);
-        Assert.Equal(3, engine.Components.Count);
+        Assert.Equal(2, engine.Components.Count);
     }
 
     [Fact]
@@ -112,7 +119,7 @@ public sealed class ComponentRegistryTests
         Assert.True(engine.Components.IsFrozen);
         var exception = Assert.Throws<InvalidOperationException>(() => captured!.Register<Health>("game.Late"));
         Assert.Contains("frozen", exception.Message);
-        Assert.Equal(2, engine.Components.Count);
+        Assert.Equal(1, engine.Components.Count);
     }
 
     private sealed class TestModule(Action<ComponentRegisterContext> configureComponents) : IEngineModule

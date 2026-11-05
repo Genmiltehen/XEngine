@@ -1,7 +1,7 @@
 using System.Numerics;
 using XEngine.Core.Ecs;
 using XEngine.Core.Systems;
-using XEngine.Core.Transforms;
+using XEngine.Common.Transform;
 
 namespace XEngine.Core.Tests.Systems;
 

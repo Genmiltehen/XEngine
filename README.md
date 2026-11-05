@@ -1,7 +1,7 @@
 # XEngine
 
-Headless-ядро 2D-движка: archetype ECS, иерархия, трансформы, системы и сцены.
-Рендер, физика, ввод и игровая логика в этот репозиторий не входят.
+Headless-ядро 2D-движка: archetype ECS, иерархия, системы, сцены и отдельный модуль
+2D-трансформов. Рендер, физика, ввод и игровая логика в этот репозиторий не входят.
 
 ## Требования
 
@@ -22,15 +22,16 @@ BenchmarkDotNet — только в проекте бенчмарков.
 
 ```
 src/XEngine.Core/
-  Ecs/            EntityId, World, Archetype, ComponentRegistry, ComponentRegisterContext, ComponentType, Query, CommandBuffer
-  Hierarchy/      Node (иерархией владеет World)
-  Transforms/     Transform2D, TransformSystem
+  Ecs/            EntityId, World, Archetype, ComponentRegistry, ComponentHandle, Query, CommandBuffer
+  Hierarchy/      Node, BeforeReparent-событие (иерархией владеет World)
   Systems/        ISystem, SystemPhase, SystemScheduler, WorldConfigurator
   Scenes/         ISceneBuilder, SceneBuildContext, Scene, SceneManager
   Services/       EngineServiceContainer
   Modules/        IEngineModule, CoreModule
   Hosting/        Engine, EngineBuilder
   Time/           GameTime
+src/XEngine.Common.Transform/
+  Transform2D, TransformFlags, TransformSystem, TransformModule, TransformWorldConfigurator
 tests/XEngine.Core.Tests/
 benchmarks/XEngine.Core.Benchmarks/
 docs/plans.md      оставшиеся задачи и будущие подсистемы
@@ -46,7 +47,7 @@ using XEngine.Core.Hosting;
 using XEngine.Core.Modules;
 using XEngine.Core.Scenes;
 using XEngine.Core.Systems;
-using XEngine.Core.Transforms;
+using XEngine.Common.Transform;
 
 struct Velocity : IComponent
 {
@@ -81,6 +82,7 @@ sealed class Level : ISceneBuilder
 
 using Engine engine = new EngineBuilder()
     .AddModule(new GameModule())
+    .AddModule(new TransformModule())
     .Build();
 
 engine.Scenes.Replace(new Level(), "level");
@@ -90,11 +92,14 @@ while (running) engine.Update(dt);
 
 Компоненты регистрируются один раз в модуле и замораживаются до создания миров. Для тестов и
 standalone-сценариев `new World()`/`new SceneManager()` создают локальный незамороженный
-реестр: недостающие типы регистрируются при первом обращении.
+реестр: недостающие типы регистрируются при первом обращении. Трансформы в него не входят:
+для standalone-мира передайте `TransformWorldConfigurator.Default`, а в движке подключите
+`TransformModule`.
 
 `Engine.Update` вызывает `SceneManager.Update`, который сам применяет отложенные переходы,
-обновляет только верхнюю сцену и пересчитывает трансформы в конце кадра. Цикл приложения и
-расчёт `dt` — задача будущего runtime-слоя.
+обновляет только верхнюю сцену и в конце кадра запускает фазу `Transform`. Если модуль
+трансформов не подключён, фаза остаётся пустой. Цикл приложения и расчёт `dt` — задача
+будущего runtime-слоя.
 
 ## ECS
 
@@ -118,8 +123,9 @@ world.Query<Lifetime>().ForEach((EntityId entity, ref Lifetime lifetime) => comm
 world.Submit(commands);
 ```
 
-`CommandBuffer` схлопывает операции по сущности, умеет создавать и уничтожать сущности,
-переподвешивать их и сохранять мировую трансформацию.
+`CommandBuffer` схлопывает операции по сущности, умеет создавать и уничтожать сущности и
+переподвешивать их. Сохранение мировой трансформации задаётся флагом
+`TransformFlags.KeepWorldOnDetach`, а не параметром команды.
 
 ## Реестр компонентов и модули
 
@@ -131,6 +137,10 @@ world.Submit(commands);
   незарегистрированного `T` бросает `InvalidOperationException`.
 - `World.Add<T>/Get<T>/Has<T>` резолвят дескриптор через `World.Components`; статической
   авторегистрации в `ComponentType<T>` больше нет.
+- `World.Handle<T>()` возвращает `ComponentHandle<T>`, который фиксирует `ComponentType` и
+  реестр. Перегрузки `Get/TryGet/Has(entity, handle)` проверяют принадлежность реестру и
+  используются в горячих путях, чтобы не разрешать тип на каждой сущности. Невалидный или
+  чужой handle бросает `InvalidOperationException`.
 - `ComponentRegistry.Get<T>()` держит горячий `[ThreadStatic]`-кэш в маленьком
   inline-методе; холодный поиск/регистрация вынесены в `NoInlining`, чтобы не раздувать
   вызывающие query-методы и сохранять инлайнинг `ForEach`.
@@ -145,19 +155,25 @@ world.Submit(commands);
   `ActiveInHierarchy`, запрет циклов.
 - `Destroy` по умолчанию переподвешивает детей к родителю удалённой сущности;
   `DestroyMode.Recursive` удаляет поддерево.
-- `Transform2D` опционален. Если у родителя его нет, мировая матрица ребёнка просто
-  наследует мировую матрицу ближайшего предка с `Transform2D`.
+- `Transform2D` живёт в `XEngine.Common.Transform` и опционален. Если у родителя его нет, мировая
+  матрица ребёнка наследует мировую матрицу ближайшего предка с `Transform2D`.
 - Конвенция `System.Numerics` — row-vector: `point' = point * matrix`,
   `World = Local * Parent.World`, `Local = Scale * Rotation * Translation`.
+- `TransformFlags.KeepWorldOnDetach` — постоянная политика сущности: при каждом
+  `SetParent`/detach, включая переподвешивание детей при `Destroy`, мировая матрица
+  сохраняется. Флаг применяется к каждому ребёнку отдельно; `DestroyMode.Recursive`
+  его игнорирует, потому что поддерево уничтожается.
+- `World.BeforeReparent` вызывается после валидаций и early-return, но до изменения связей.
+  Аргументы передаются по `in`, поэтому подписка не аллоцирует на вызов.
 - `TransformSystem` пересчитывает всё дерево в фазе `Transform`. Мировые матрицы готовы
   после `SceneManager`/`World.Update`; `World.UpdateTransforms()` запускает только эту фазу.
 
 ## Системы и ресурсы
 
 Фазы выполняются в фиксированном порядке: `PreUpdate`, `Update`, `PostUpdate`, `Transform`.
-Внутри фазы системы идут в порядке регистрации. `World` по умолчанию регистрирует
-`TransformSystem` через `WorldConfigurators.Default`; свой набор систем задаётся
-`WorldConfigurator`.
+Внутри фазы системы идут в порядке регистрации. `new World()` не добавляет систем
+автоматически; свой набор задаётся `WorldConfigurator`. В движке трансформы подключаются
+через `TransformModule`, в standalone — через `TransformWorldConfigurator.Default`.
 
 - Состояние текущей сцены — в `World.SetResource<T>` / `GetResource<T>`.
 - Глобальные сервисы (конфигурация, логирование, ассеты, будущие бэкенды) —
@@ -187,6 +203,10 @@ dotnet run -c Release --project benchmarks/XEngine.Core.Benchmarks -- --filter "
 > Замеры — ориентир для текущей машины, а не контракт. Последний прогон:
 > AMD Ryzen 7 7800X3D (16 logical / 8 physical cores), Linux CachyOS,
 > .NET SDK 10.0.114, runtime 10.0.14, x64 RyuJIT.
+>
+> **TODO:** числа ниже не перемерялись на текущей машине. Нужны повторные прогоны
+> `TransformBenchmarks`, `StructuralBenchmarks` и `SetParent` с подписчиком
+> `BeforeReparent` и без; актуальный список задач — в `docs/plans.md`.
 
 Обход запросов (0 B на операцию):
 
@@ -216,15 +236,6 @@ dotnet run -c Release --project benchmarks/XEngine.Core.Benchmarks -- --filter "
 | ---: | ---: | ---: | ---: |
 | 1 000 | 51.75 µs | 77.20 µs | 72.88 µs |
 | 10 000 | 511.19 µs | 789.52 µs | 754.49 µs |
-
-Сравнение с `aa27cbb` (до перехода на `ComponentRegistry`) на той же машине:
-структурные операции и вызовы запросов остались на уровне baseline, трансформы
-после разрешения `ComponentType` один раз за кадр — на уровне baseline или немного
-быстрее. Просадку в горячих путях устранили `[ThreadStatic]`-кэш резолва, передача
-уже разрешённого типа в `World`/`Archetype` и разделение резолва на inline-быстрый
-путь и `NoInlining`-регистрацию: это сохраняет инлайнинг `ForEach`, поэтому
-`Filtered` снова на уровне baseline (`4.32 µs` против `4.19 µs` при 10 000
-сущностей).
 
 Выводы:
 

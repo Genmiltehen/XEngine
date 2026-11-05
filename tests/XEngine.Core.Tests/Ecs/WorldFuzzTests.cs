@@ -1,7 +1,7 @@
 using System.Numerics;
 using XEngine.Core.Ecs;
 using XEngine.Core.Hierarchy;
-using XEngine.Core.Transforms;
+using XEngine.Common.Transform;
 
 namespace XEngine.Core.Tests.Ecs;
 
@@ -21,7 +21,7 @@ public sealed class WorldFuzzTests
     public void RandomOperations_MatchReferenceModel(int seed)
     {
         var random = new Random(seed);
-        using var world = new World();
+        using var world = new World(TransformWorldConfigurator.Default);
         var model = new ReferenceModel();
         for (int step = 0; step < 1500; step++)
         {

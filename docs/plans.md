@@ -7,14 +7,8 @@
 ## 1. Контекст
 
 - Репозиторий — только движок. GunFight, его история и игровая логика не учитываются.
-- Headless-ядро реализовано: archetype ECS, `ComponentRegistry` с регистрацией через
-  модули, иерархия, запросы, `CommandBuffer`, системы, ресурсы, сцены и `EngineBuilder`.
-  `Transform2D` и `TransformSystem` пока лежат в Core и выносятся отдельным этапом (см. 3.3).
 - Рендер, физика, ввод, конфигурация и игровые подсистемы в текущий этап не входят.
 - Git-историю можно реинициализировать: старый проект сохранён в другом репозитории.
-- Базовые конвенции (row-vector `System.Numerics`, `Node` как обязательный компонент,
-  `World = Local * Parent.World`, общий реестр компонентов) зафиксированы в `README.md` и
-  тестах.
 
 ## 2. Упрочнение ядра
 
@@ -23,19 +17,9 @@
 - Кэш списка архетипов под запрос — только если профиль покажет, что перебор архетипов
   заметен на фоне обхода сущностей.
 - Пул для `CommandBuffer` — если буфер окажется горячим путём (сейчас ~380 B на операцию).
-- Резолв `T` в горячих путях закрыт без отдельного бенчмарка: `ComponentRegistry.Get<T>`
-  держит `[ThreadStatic]`-кэш в маленьком inline-методе, а холодная регистрация вынесена
-  в отдельный `NoInlining`-метод, чтобы не раздувать вызывающие query-методы и не ломать
-  инлайнинг `ForEach`. `World`/`Archetype` принимают уже разрешённый `ComponentType`, а
-  `TransformSystem` разрешает тип один раз за кадр. Существующий набор бенчмарков
-  показывает, что просадка относительно `aa27cbb` устранена.
-- `World.Has(EntityId, ComponentType)` и `World.Get<T>(EntityId, ComponentType)` — временная
-  оптимизация под бенчмарки, а не публичный контракт. Их API позволяет передать
-  `ComponentType` от другого компонента и получить `InvalidCastException`; не выставлять
-  публично. Целевой API — типизированный `ComponentHandle<T>`, низкоуровневые
-  перегрузки оставить `internal`.
-- Добавить замер `SetParent` с подписчиком `BeforeReparent` и без, чтобы проверить
-  стоимость event-хука.
+- **TODO (бенчмарки):** прогон не выполнялся на текущей машине. Нужно повторить
+  `TransformBenchmarks` и `StructuralBenchmarks`, а также замерить `SetParent` с
+  подписчиком `BeforeReparent` и без, чтобы проверить стоимость event-хука.
 - Критерий завершения: известные узкие места закрыты или осознанно оставлены, API стабилен
   для следующего этапа.
 
@@ -57,46 +41,8 @@
 - `World.Resources` и `AddSystem` — достаточные точки интеграции; при необходимости позже
   добавляется интерфейс `IPhysicsBackend`.
 
-### 3.3. Трансформы
-
-Принято вынести `Transform2D` и `TransformSystem` в отдельную сборку (`XEngine.Transforms`,
-рабочее имя). Направление ссылок: `XEngine.Transforms -> XEngine.Core`; `Core` не ссылается
-на `Transform2D`, `System.Numerics`-матрицы и transform-специфичные API.
-
-- `Transform2D` получает `TransformFlags` с флагом `KeepWorldOnDetach`. Это постоянная
-  политика сущности, а не разовый параметр операции: при каждом detach/reparent с флагом
-  сохраняется мировое положение. `TransformFlags` оставляет место для будущих флагов.
-- Отдельный transient-компонент для `keepWorld` не используется: add/remove компонента в
-  archetype ECS дорог и меняет архетип. Флаг живёт в `Transform2D`.
-- `World.SetParent`/`World.Destroy`/`CommandBuffer.SetParent`/`CommandBuffer.Destroy`/
-  `DestroyIf` больше не принимают `bool keepWorld`. `CommandBuffer` не хранит
-  `ParentKeepWorld`/`DestroyKeepWorld`.
-- `World` предоставляет событие `BeforeReparent` (кастомный delegate, аргументы — `in struct`)
-  до изменения связей. Подписчик из transforms-модуля читает `TransformFlags.KeepWorldOnDetach`
-  и сохраняет матрицу. Список хуков пока не нужен; event достаточно для одного подписчика и
-  не аллоцирует на вызов при `in struct`.
-- `Destroy` в режиме `ReparentChildren` уже переподвешивает детей через `SetParent`, поэтому
-  тот же `BeforeReparent` обслуживает и удаление. Флаг применяется к каждому ребёнку
-  индивидуально; `DestroyMode.Recursive` не сохраняет мир, потому что дети уничтожаются.
-  Это сознательная замена старой семантики `Destroy(..., keepWorld: true)`, которая сохраняла
-  всех детей и не позволяла выбрать отдельных.
-- `SceneManager` продолжает запускать фазу `Transform` после построения сцены; `World` при
-  этом не знает о `Transform2D`. `World.UpdateTransforms()` остаётся запуском фазы.
-- `TransformSystem` разрешает `ComponentType` один раз за кадр через типизированный
-  `ComponentHandle<T>`; `World.Has(EntityId, ComponentType)` и
-  `World.Get<T>(EntityId, ComponentType)` остаются внутренними низкоуровневыми примитивами
-  и не выставляются в публичный API.
-- Публичная регистрация компонента и систем/хука выполняется `TransformsModule` (и
-  `TransformsWorldConfigurator` для standalone `World`/`SceneManager`).
-
 ## 4. Открытые вопросы
 
-- Имя сборки/namespace и имя компонента: `XEngine.Transforms` + `transforms.Transform2D` или
-  сохранить `XEngine.Core.Transforms` + `core.Transform2D` ради стабильности имён сцен.
-- Дефолтная композиция: явный `TransformsModule` (Core без трансформов по умолчанию) или
-  отдельный meta-пакет/фабрика, сохраняющая текущие дефолты `new World()`/`EngineBuilder`.
-- `ComponentHandle<T>`: вводить сразу или после повторных замеров; если обычный generic-путь
-  достаточно быстр, handle можно отложить.
 - Будущие хуки `World` (add/remove/destroy, другие команды) — только когда появятся реальные
   потребители; сейчас достаточно одного `BeforeReparent`.
 - Core остаётся dimension-agnostic: 3D-трансформ, если понадобится, делается отдельным

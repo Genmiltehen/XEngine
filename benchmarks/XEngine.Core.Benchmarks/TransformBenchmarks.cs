@@ -1,7 +1,7 @@
 using System.Numerics;
 using BenchmarkDotNet.Attributes;
 using XEngine.Core.Ecs;
-using XEngine.Core.Transforms;
+using XEngine.Common.Transform;
 
 namespace XEngine.Core.Benchmarks;
 

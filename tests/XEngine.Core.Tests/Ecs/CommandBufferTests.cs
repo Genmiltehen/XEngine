@@ -1,7 +1,7 @@
 using System.Numerics;
 using XEngine.Core.Ecs;
 using XEngine.Core.Hierarchy;
-using XEngine.Core.Transforms;
+using XEngine.Common.Transform;
 
 namespace XEngine.Core.Tests.Ecs;
 
@@ -175,7 +175,7 @@ public sealed class CommandBufferTests
     [Fact]
     public void BufferCanCreateWholeHierarchyWithChildrenBeforeParents()
     {
-        using var world = new World();
+        using var world = new World(TransformWorldConfigurator.Default);
         CommandBuffer commands = world.BeginCommands();
         EntityId child = commands.Create();
         EntityId parent = commands.Create();
@@ -196,7 +196,7 @@ public sealed class CommandBufferTests
     [Fact]
     public void BufferedReparent_CanPreserveWorldTransform()
     {
-        using var world = new World();
+        using var world = new World(TransformWorldConfigurator.Default);
         EntityId firstParent = world.Create();
         world.Add(firstParent, Transform2D.At(new Vector2(10, 0)));
         EntityId secondParent = world.Create();
@@ -205,13 +205,31 @@ public sealed class CommandBufferTests
         world.Add(child, Transform2D.At(new Vector2(5, 0)));
         world.SetParent(child, firstParent);
         world.Update(0f);
+        world.Get<Transform2D>(child).Flags = TransformFlags.KeepWorldOnDetach;
         Matrix3x2 before = world.Get<Transform2D>(child).World;
         CommandBuffer commands = world.BeginCommands();
-        commands.SetParent(child, secondParent, keepWorld: true);
+        commands.SetParent(child, secondParent);
         world.Submit(commands);
         AssertNear(before, world.Get<Transform2D>(child).World);
         world.Update(0f);
         AssertNear(before, world.Get<Transform2D>(child).World);
+    }
+
+    [Fact]
+    public void BufferedSetParent_RaisesBeforeReparent()
+    {
+        using var world = new World();
+        EntityId firstParent = world.Create();
+        EntityId secondParent = world.Create();
+        EntityId child = world.Create();
+        world.SetParent(child, firstParent);
+        List<EntityId> previousParents = [];
+        world.BeforeReparent += (World _, in BeforeReparentEventArgs args) => previousParents.Add(args.PreviousParent);
+        CommandBuffer commands = world.BeginCommands();
+        commands.SetParent(child, secondParent);
+        world.Submit(commands);
+        Assert.Equal([firstParent], previousParents);
+        Assert.Equal(secondParent, world.Get<Node>(child).Parent);
     }
 
     [Fact]

@@ -15,6 +15,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\XEngine.Core\XEngine.Core.csproj" />
+    <ProjectReference Include="..\..\src\XEngine.Common.Transform\XEngine.Common.Transform.csproj" />
   </ItemGroup>
 
 </Project>

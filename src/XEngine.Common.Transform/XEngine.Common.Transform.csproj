@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Project Sdk="Microsoft.NET.Sdk">
+    <PropertyGroup>
+        <TargetFramework>net10.0</TargetFramework>
+        <ImplicitUsings>enable</ImplicitUsings>
+        <Nullable>enable</Nullable>
+
+		<IsPackable>true</IsPackable>
+        <PackageId>XEngine.Common.Transform</PackageId>
+        <Version>0.1.0</Version>
+        <Authors>Genmiltehen</Authors>
+        <Description>2D transforms for XEngine</Description>
+        <PackageTags>xengine;ecs;gamedev;transforms</PackageTags>
+        <RepositoryUrl>https://github.com/Genmiltehen/XEngine.git</RepositoryUrl>
+        <RepositoryType>git</RepositoryType>
+        <PackageLicenseExpression>MIT</PackageLicenseExpression>
+        <IncludeSymbols>true</IncludeSymbols>
+        <SymbolPackageFormat>snupkg</SymbolPackageFormat>
+        <GenerateDocumentationFile>true</GenerateDocumentationFile>
+        <GeneratePackageOnBuild>false</GeneratePackageOnBuild>
+    </PropertyGroup>
+
+    <ItemGroup>
+        <ProjectReference Include="..\XEngine.Core\XEngine.Core.csproj" />
+    </ItemGroup>
+</Project>

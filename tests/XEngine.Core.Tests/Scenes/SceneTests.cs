@@ -3,7 +3,7 @@ using XEngine.Core.Ecs;
 using XEngine.Core.Scenes;
 using XEngine.Core.Services;
 using XEngine.Core.Systems;
-using XEngine.Core.Transforms;
+using XEngine.Common.Transform;
 
 namespace XEngine.Core.Tests.Scenes;
 
@@ -12,7 +12,7 @@ public sealed class SceneTests
     [Fact]
     public void ReplaceBeforeFirstUpdate_AppliesOnFirstUpdate()
     {
-        using var manager = new SceneManager();
+        using var manager = new SceneManager(configurator: TransformWorldConfigurator.Default);
         EntityId entity = default;
         var builder = new TestBuilder(context =>
         {

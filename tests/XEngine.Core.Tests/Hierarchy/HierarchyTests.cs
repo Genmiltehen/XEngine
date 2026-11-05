@@ -1,7 +1,7 @@
 using System.Numerics;
 using XEngine.Core.Ecs;
 using XEngine.Core.Hierarchy;
-using XEngine.Core.Transforms;
+using XEngine.Common.Transform;
 
 namespace XEngine.Core.Tests.Hierarchy;
 
@@ -205,29 +205,28 @@ public sealed class HierarchyTests
     }
 
     [Fact]
-    public void Destroy_PreserveWorld_KeepsChildInPlace()
+    public void Destroy_KeepWorldOnDetach_KeepsChildInPlace()
     {
-        using var world = new World();
-        var transforms = new TransformSystem();
+        using var world = new World(TransformWorldConfigurator.Default);
         EntityId parent = world.Create();
         world.Add(parent, Transform2D.At(new Vector2(10, 0)));
         EntityId child = world.Create();
         world.Add(child, Transform2D.At(new Vector2(5, 0)));
         world.SetParent(child, parent);
-        transforms.Update(world, 0);
+        world.UpdateTransforms();
+        world.Get<Transform2D>(child).Flags = TransformFlags.KeepWorldOnDetach;
         Vector2 before = Vector2.Transform(Vector2.Zero, world.Get<Transform2D>(child).World);
-        world.Destroy(parent, keepWorld: true);
-        transforms.Update(world, 0);
+        world.Destroy(parent);
+        world.UpdateTransforms();
         Vector2 after = Vector2.Transform(Vector2.Zero, world.Get<Transform2D>(child).World);
         AssertNear(before, after);
         AssertNear(new Vector2(15, 0), after);
     }
 
     [Fact]
-    public void SetParent_PreserveWorld_KeepsWorldTransform()
+    public void SetParent_KeepWorldOnDetach_KeepsWorldTransform()
     {
-        using var world = new World();
-        var transforms = new TransformSystem();
+        using var world = new World(TransformWorldConfigurator.Default);
         EntityId firstParent = world.Create();
         world.Add(firstParent, Transform2D.At(new Vector2(10, 0)));
         EntityId secondParent = world.Create();
@@ -235,20 +234,20 @@ public sealed class HierarchyTests
         EntityId child = world.Create();
         world.Add(child, Transform2D.At(new Vector2(5, 0)));
         world.SetParent(child, firstParent);
-        transforms.Update(world, 0);
+        world.UpdateTransforms();
+        world.Get<Transform2D>(child).Flags = TransformFlags.KeepWorldOnDetach;
         Matrix3x2 before = world.Get<Transform2D>(child).World;
-        world.SetParent(child, secondParent, keepWorld: true);
+        world.SetParent(child, secondParent);
         AssertNear(before, world.Get<Transform2D>(child).World);
-        transforms.Update(world, 0);
+        world.UpdateTransforms();
         AssertNear(before, world.Get<Transform2D>(child).World);
         AssertNear(new Vector2(-85, -50), world.Get<Transform2D>(child).Position);
     }
 
     [Fact]
-    public void SetParent_PreserveWorld_WithRotationAndUniformScale()
+    public void SetParent_KeepWorldOnDetach_WithRotationAndUniformScale()
     {
-        using var world = new World();
-        var transforms = new TransformSystem();
+        using var world = new World(TransformWorldConfigurator.Default);
         EntityId firstParent = world.Create();
         world.Add(firstParent, new Transform2D
         {
@@ -271,14 +270,145 @@ public sealed class HierarchyTests
             Scale = new Vector2(1.2f, 1.2f),
         });
         world.SetParent(child, firstParent);
-        transforms.Update(world, 0);
+        world.UpdateTransforms();
+        world.Get<Transform2D>(child).Flags = TransformFlags.KeepWorldOnDetach;
         Matrix3x2 before = world.Get<Transform2D>(child).World;
         Vector2 beforePoint = Vector2.Transform(new Vector2(1, 1), before);
-        world.SetParent(child, secondParent, keepWorld: true);
-        transforms.Update(world, 0);
+        world.SetParent(child, secondParent);
+        world.UpdateTransforms();
         Matrix3x2 after = world.Get<Transform2D>(child).World;
         Vector2 afterPoint = Vector2.Transform(new Vector2(1, 1), after);
         AssertNear(beforePoint, afterPoint, 1e-3f);
+    }
+
+    [Fact]
+    public void SetParent_WithoutKeepWorldOnDetach_ChangesWorld()
+    {
+        using var world = new World(TransformWorldConfigurator.Default);
+        EntityId firstParent = world.Create();
+        world.Add(firstParent, Transform2D.At(new Vector2(10, 0)));
+        EntityId secondParent = world.Create();
+        world.Add(secondParent, Transform2D.At(new Vector2(100, 0)));
+        EntityId child = world.Create();
+        world.Add(child, Transform2D.At(new Vector2(5, 0)));
+        world.SetParent(child, firstParent);
+        world.UpdateTransforms();
+        world.SetParent(child, secondParent);
+        world.UpdateTransforms();
+        AssertNear(new Vector2(105, 0), Vector2.Transform(Vector2.Zero, world.Get<Transform2D>(child).World));
+    }
+
+    [Fact]
+    public void Destroy_KeepWorldOnDetach_AppliesPerChild()
+    {
+        using var world = new World(TransformWorldConfigurator.Default);
+        EntityId parent = world.Create();
+        world.Add(parent, Transform2D.At(new Vector2(10, 0)));
+        EntityId kept = world.Create();
+        world.Add(kept, Transform2D.At(new Vector2(5, 0)));
+        EntityId moved = world.Create();
+        world.Add(moved, Transform2D.At(new Vector2(5, 0)));
+        world.SetParent(kept, parent);
+        world.SetParent(moved, parent);
+        world.UpdateTransforms();
+        world.Get<Transform2D>(kept).Flags = TransformFlags.KeepWorldOnDetach;
+        world.Destroy(parent);
+        world.UpdateTransforms();
+        AssertNear(new Vector2(15, 0), Vector2.Transform(Vector2.Zero, world.Get<Transform2D>(kept).World));
+        AssertNear(new Vector2(5, 0), Vector2.Transform(Vector2.Zero, world.Get<Transform2D>(moved).World));
+    }
+
+    [Fact]
+    public void SetParent_ToRoot_KeepWorldOnDetach_KeepsWorldTransform()
+    {
+        using var world = new World(TransformWorldConfigurator.Default);
+        EntityId parent = world.Create();
+        world.Add(parent, Transform2D.At(new Vector2(10, 0)));
+        EntityId child = world.Create();
+        world.Add(child, Transform2D.At(new Vector2(5, 0)));
+        world.SetParent(child, parent);
+        world.UpdateTransforms();
+        world.Get<Transform2D>(child).Flags = TransformFlags.KeepWorldOnDetach;
+
+        world.SetParent(child, EntityId.None);
+        world.UpdateTransforms();
+
+        Assert.True(world.Get<Node>(child).Parent.IsNone);
+        AssertNear(new Vector2(15, 0), Vector2.Transform(Vector2.Zero, world.Get<Transform2D>(child).World));
+        AssertNear(new Vector2(15, 0), world.Get<Transform2D>(child).Position);
+    }
+
+    [Fact]
+    public void Destroy_Recursive_IgnoresKeepWorldOnDetach()
+    {
+        using var world = new World(TransformWorldConfigurator.Default);
+        EntityId parent = world.Create();
+        EntityId child = world.Create();
+        world.Add(child, Transform2D.At(new Vector2(5, 0)));
+        world.SetParent(child, parent);
+        world.UpdateTransforms();
+        world.Get<Transform2D>(child).Flags = TransformFlags.KeepWorldOnDetach;
+
+        world.Destroy(parent, DestroyMode.Recursive);
+
+        Assert.False(world.IsAlive(parent));
+        Assert.False(world.IsAlive(child));
+    }
+
+    [Fact]
+    public void BeforeReparent_RunsBeforeLinksChange_AndSkipsNoOp()
+    {
+        using var world = new World();
+        EntityId firstParent = world.Create();
+        EntityId secondParent = world.Create();
+        EntityId child = world.Create();
+        world.SetParent(child, firstParent);
+        var calls = 0;
+        EntityId previousAtEvent = default;
+        EntityId parentAtEvent = default;
+        world.BeforeReparent += (World current, in BeforeReparentEventArgs args) =>
+        {
+            calls++;
+            Assert.Same(world, current);
+            Assert.Equal(child, args.Child);
+            previousAtEvent = args.PreviousParent;
+            parentAtEvent = current.Get<Node>(args.Child).Parent;
+        };
+        world.SetParent(child, firstParent);
+        Assert.Equal(0, calls);
+        world.SetParent(child, secondParent);
+        Assert.Equal(1, calls);
+        Assert.Equal(firstParent, previousAtEvent);
+        Assert.Equal(firstParent, parentAtEvent);
+        Assert.Equal(secondParent, world.Get<Node>(child).Parent);
+    }
+
+    [Fact]
+    public void BeforeReparent_RunsForEachReparentedChild_DuringDestroy()
+    {
+        using var world = new World();
+        EntityId parent = world.Create();
+        EntityId first = world.Create();
+        EntityId second = world.Create();
+        world.SetParent(first, parent);
+        world.SetParent(second, parent);
+        List<EntityId> children = [];
+        world.BeforeReparent += (World _, in BeforeReparentEventArgs args) => children.Add(args.Child);
+        world.Destroy(parent);
+        Assert.Equal([first, second], children);
+    }
+
+    [Fact]
+    public void BeforeReparent_DoesNotRunForRecursiveDestroy()
+    {
+        using var world = new World();
+        EntityId parent = world.Create();
+        EntityId child = world.Create();
+        world.SetParent(child, parent);
+        var calls = 0;
+        world.BeforeReparent += (World _, in BeforeReparentEventArgs _) => calls++;
+        world.Destroy(parent, DestroyMode.Recursive);
+        Assert.Equal(0, calls);
     }
 
     [Fact]

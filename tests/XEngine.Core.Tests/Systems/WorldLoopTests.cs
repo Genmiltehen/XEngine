@@ -1,7 +1,7 @@
 using System.Numerics;
 using XEngine.Core.Ecs;
 using XEngine.Core.Systems;
-using XEngine.Core.Transforms;
+using XEngine.Common.Transform;
 
 namespace XEngine.Core.Tests.Systems;
 
@@ -43,9 +43,9 @@ public sealed class WorldLoopTests
     }
 
     [Fact]
-    public void DefaultWorld_ComputesTransformsOnUpdate()
+    public void ConfiguredWorld_ComputesTransformsOnUpdate()
     {
-        using var world = new World();
+        using var world = new World(TransformWorldConfigurator.Default);
         EntityId entity = world.Create();
         world.Add(entity, Transform2D.At(new Vector2(5, 7)));
         world.Update(0f);

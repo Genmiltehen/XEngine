@@ -37,25 +37,23 @@ public sealed class CommandBuffer
         group.Additions.Remove(type.Id);
     }
 
-    public void Destroy(EntityId entity, DestroyMode mode = DestroyMode.ReparentChildren, bool keepWorld = false)
+    public void Destroy(EntityId entity, DestroyMode mode = DestroyMode.ReparentChildren)
     {
         EntityCommands group = GetOrCreate(entity);
         group.Destroyed = true;
         group.DestroyMode = mode;
-        group.DestroyKeepWorld = keepWorld;
     }
 
-    public void DestroyIf(bool condition, EntityId entity, DestroyMode mode = DestroyMode.ReparentChildren, bool keepWorld = false)
+    public void DestroyIf(bool condition, EntityId entity, DestroyMode mode = DestroyMode.ReparentChildren)
     {
-        if (condition) Destroy(entity, mode, keepWorld);
+        if (condition) Destroy(entity, mode);
     }
 
-    public void SetParent(EntityId child, EntityId parent, bool keepWorld = false)
+    public void SetParent(EntityId child, EntityId parent)
     {
         EntityCommands group = GetOrCreate(child);
         group.HasSetParent = true;
         group.Parent = parent;
-        group.ParentKeepWorld = keepWorld;
     }
 
     internal void Flush(World world)
@@ -77,13 +75,13 @@ public sealed class CommandBuffer
         }
         foreach (EntityCommands group in _groups)
             if (!group.Destroyed && group.HasSetParent)
-                world.SetParent(group.Entity, group.Parent, group.ParentKeepWorld);
+                world.SetParent(group.Entity, group.Parent);
 
         foreach (EntityCommands group in _groups)
         {
             if (!group.Destroyed) continue;
             if (group.IsCreated) world.CancelReserved(group.Entity);
-            else world.Destroy(group.Entity, group.DestroyMode, group.DestroyKeepWorld);
+            else world.Destroy(group.Entity, group.DestroyMode);
         }
         _groups.Clear();
         _byIndex.Clear();
@@ -104,10 +102,8 @@ public sealed class CommandBuffer
         public bool IsCreated { get; set; }
         public bool Destroyed { get; set; }
         public DestroyMode DestroyMode { get; set; }
-        public bool DestroyKeepWorld { get; set; }
         public bool HasSetParent { get; set; }
         public EntityId Parent { get; set; }
-        public bool ParentKeepWorld { get; set; }
         public Dictionary<int, ICommandComponent> Additions { get; } = [];
         public HashSet<int> Removals { get; } = [];
     }

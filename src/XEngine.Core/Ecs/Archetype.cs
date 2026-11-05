@@ -35,9 +35,14 @@ internal sealed class Archetype
 
     public int IndexOf(int componentTypeId) => _columnIndices[componentTypeId];
 
-    public Column<T> GetColumn<T>() where T : struct, IComponent => GetColumn<T>(_registry.Get<T>());
+    public Column<T> GetColumn<T>() where T : struct, IComponent => (Column<T>)Columns[_columnIndices[_registry.Get<T>().Id]];
 
-    internal Column<T> GetColumn<T>(ComponentType type) where T : struct, IComponent => (Column<T>)Columns[_columnIndices[type.Id]];
+    internal Column<T> GetColumn<T>(ComponentHandle<T> handle) where T : struct, IComponent
+    {
+        return !ReferenceEquals(handle.Registry, _registry)
+            ? throw new InvalidOperationException("Component handle belongs to another component registry.")
+            : (Column<T>)Columns[_columnIndices[handle.Type.Id]];
+    }
 
     public int AddEntity(EntityId entity)
     {

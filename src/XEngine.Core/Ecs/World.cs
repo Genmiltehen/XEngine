@@ -1,10 +1,8 @@
 using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
-using System.Numerics;
 using XEngine.Core.Hierarchy;
 using XEngine.Core.Systems;
 using XEngine.Core.Time;
-using XEngine.Core.Transforms;
 
 namespace XEngine.Core.Ecs;
 
@@ -32,13 +30,15 @@ public sealed class World : IDisposable
         Components = components;
         _nodeType = components.Get<Node>();
         _nodeMask = ComponentMask.Empty.With(_nodeType.Id);
-        (configurator ?? WorldConfigurators.Default)(this);
+        configurator?.Invoke(this);
     }
 
     public ComponentRegistry Components { get; }
     public int EntityCount => _entities.AliveCount;
     public int ArchetypeCount => _archetypes.Count;
     public GameTime Time { get; private set; }
+	
+    public event BeforeReparentHandler? BeforeReparent;
 
 #region Entity Manipulation
     public bool IsAlive(EntityId entity) => _entities.IsAlive(entity);
@@ -51,7 +51,7 @@ public sealed class World : IDisposable
         return entity;
     }
 
-    public void Destroy(EntityId entity, DestroyMode mode = DestroyMode.ReparentChildren, bool keepWorld = false)
+    public void Destroy(EntityId entity, DestroyMode mode = DestroyMode.ReparentChildren)
     {
         EnsureNotIterating();
         if (!_entities.IsAlive(entity))
@@ -65,28 +65,23 @@ public sealed class World : IDisposable
             return;
         }
         EntityId parent = GetNodeRef(entity).Parent;
-        foreach (EntityId child in Children(entity)) SetParent(child, parent, keepWorld);
+        foreach (EntityId child in Children(entity)) SetParent(child, parent);
         UnlinkFromParent(entity);
         RemoveEntity(entity);
     }
 
-    public void SetParent(EntityId child, EntityId parent, bool keepWorld = false)
+    public void SetParent(EntityId child, EntityId parent)
     {
         EnsureNotIterating();
         _ = GetAliveRecord(child);
         if (!parent.IsNone) _ = GetAliveRecord(parent);
         if (child == parent) throw new InvalidOperationException("An entity cannot be its own parent.");
         if (!parent.IsNone && IsDescendantOrSelf(parent, child)) throw new InvalidOperationException("Reparenting would create a cycle in the hierarchy.");
-        if (GetNodeRef(child).Parent == parent) return;
-        
-        var preserveWorld = keepWorld && Has<Transform2D>(child);
-        Matrix3x2 oldWorld = default;
-        Matrix3x2 parentWorld = default;
-        if (preserveWorld)
-        {
-            oldWorld = ComputeWorldMatrix(child);
-            parentWorld = parent.IsNone ? Matrix3x2.Identity : ComputeWorldMatrix(parent);
-        }
+        EntityId previousParent = GetNodeRef(child).Parent;
+        if (previousParent == parent) return;
+
+        var args = new BeforeReparentEventArgs(child, previousParent, parent);
+        BeforeReparent?.Invoke(this, in args);
 
         UnlinkFromParent(child);
         if (parent.IsNone)
@@ -105,17 +100,6 @@ public sealed class World : IDisposable
             SetSubtreeDepth(child, parentNode.Depth + 1);
             UpdateActive(child, parentNode.ActiveInHierarchy);
         }
-        
-        if (!preserveWorld) return;
-        if (!Matrix3x2.Invert(parentWorld, out Matrix3x2 inverseParent)) throw new InvalidOperationException("Cannot preserve world transform because the new parent matrix is not invertible.");
-        
-        Matrix3x2 localWorld = oldWorld * inverseParent;
-        Decompose(localWorld, out Vector2 position, out var rotation, out Vector2 scale);
-        ref Transform2D transform = ref Get<Transform2D>(child);
-        transform.Position = position;
-        transform.Rotation = rotation;
-        transform.Scale = scale;
-        transform.World = oldWorld;
     }
 
     public void SetActive(EntityId entity, bool active)
@@ -140,14 +124,14 @@ public sealed class World : IDisposable
         Archetype sourceArch = sourceRecord.Archetype!;
         if (sourceArch.Mask.Has(type.Id))
         {
-            sourceArch.GetColumn<T>(type)[sourceRecord.Row] = component;
+            sourceArch.GetColumn<T>()[sourceRecord.Row] = component;
             return;
         }
 
         ComponentMask targetMask = sourceArch.Mask.With(type.Id);
         Archetype targetArch = GetOrCreateArchetype(targetMask);
         var targetRow = MoveEntity(entity, sourceArch, sourceRecord.Row, targetArch);
-        targetArch.GetColumn<T>(type)[targetRow] = component;
+        targetArch.GetColumn<T>()[targetRow] = component;
     }
 
     public void Remove<T>(EntityId entity) where T : struct, IComponent
@@ -165,42 +149,63 @@ public sealed class World : IDisposable
         _ = MoveEntity(entity, sourceArch, sourceRecord.Row, targetArch);
     }
 
-    public ref T Get<T>(EntityId entity) where T : struct, IComponent => ref Get<T>(entity, Components.Get<T>());
+    // Handle фиксирует ComponentType, чтобы горячие пути не передавали его отдельно.
+    public ComponentHandle<T> Handle<T>() where T : struct, IComponent => new(Components.Get<T>(), Components);
 
-    internal ref T Get<T>(EntityId entity, ComponentType type) where T : struct, IComponent
+    public ref T Get<T>(EntityId entity) where T : struct, IComponent
     {
+        ComponentHandle<T> handle = Handle<T>();
+        return ref Get(entity, handle);
+    }
+
+    public ref T Get<T>(EntityId entity, ComponentHandle<T> handle) where T : struct, IComponent
+    {
+        ValidateHandle(handle);
         ref EntityRecord record = ref GetAliveRecord(entity);
         Archetype archetype = record.Archetype!;
-        if (!archetype.Mask.Has(type.Id)) throw new InvalidOperationException($"Entity {entity} does not have component {type.Name}.");
+        if (!archetype.Mask.Has(handle.Type.Id)) throw new InvalidOperationException($"Entity {entity} does not have component {handle.Type.Name}.");
 
-        return ref archetype.GetColumn<T>(type)[record.Row];
+        return ref archetype.GetColumn<T>(handle)[record.Row];
     }
 
     public bool TryGet<T>(EntityId entity, out T component) where T : struct, IComponent
     {
+        ComponentHandle<T> handle = Handle<T>();
+        return TryGet(entity, handle, out component);
+    }
+
+    public bool TryGet<T>(EntityId entity, ComponentHandle<T> handle, out T component) where T : struct, IComponent
+    {
+        ValidateHandle(handle);
         if (!_entities.IsAlive(entity))
         {
             component = default;
             return false;
         }
 
-        ComponentType type = Components.Get<T>();
         ref EntityRecord record = ref _entities.GetRecord(entity.Index);
         Archetype archetype = record.Archetype!;
-        if (!archetype.Mask.Has(type.Id))
+        if (!archetype.Mask.Has(handle.Type.Id))
         {
             component = default;
             return false;
         }
         
-        component = archetype.GetColumn<T>(type)[record.Row];
+        component = archetype.GetColumn<T>(handle)[record.Row];
         return true;
     }
 
-    public bool Has<T>(EntityId entity) where T : struct, IComponent => Has(entity, Components.Get<T>());
+    public bool Has<T>(EntityId entity) where T : struct, IComponent
+    {
+        ComponentHandle<T> handle = Handle<T>();
+        return Has(entity, handle);
+    }
 
-    internal bool Has(EntityId entity, ComponentType type) =>
-        _entities.IsAlive(entity) && _entities.GetRecord(entity.Index).Archetype!.Mask.Has(type.Id);
+    public bool Has<T>(EntityId entity, ComponentHandle<T> handle) where T : struct, IComponent
+    {
+        ValidateHandle(handle);
+        return _entities.IsAlive(entity) && _entities.GetRecord(entity.Index).Archetype!.Mask.Has(handle.Type.Id);
+    }
 #endregion
 
 #region CommandBuffer
@@ -235,7 +240,7 @@ public sealed class World : IDisposable
         ref EntityRecord record = ref GetAliveRecord(entity);
         Archetype archetype = record.Archetype!;
         if (!archetype.Mask.Has(type.Id)) throw new InvalidOperationException($"Entity {entity} does not have component {type.Name}.");
-        archetype.GetColumn<T>(type)[record.Row] = component;
+        archetype.GetColumn<T>()[record.Row] = component;
     }
 
     public void Submit(CommandBuffer commands)
@@ -335,10 +340,15 @@ public sealed class World : IDisposable
         }
 #endregion
 
+    private void ValidateHandle<T>(ComponentHandle<T> handle) where T : struct, IComponent
+    {
+        if (!ReferenceEquals(handle.Registry, Components)) throw new InvalidOperationException("Component handle belongs to another component registry.");
+    }
+
     private ref Node GetNodeRef(EntityId entity)
     {
         ref EntityRecord record = ref GetAliveRecord(entity);
-        return ref record.Archetype!.GetColumn<Node>(_nodeType)[record.Row];
+        return ref record.Archetype!.GetColumn<Node>()[record.Row];
     }
 
     private bool IsDescendantOrSelf(EntityId candidate, EntityId ancestor)
@@ -431,40 +441,11 @@ public sealed class World : IDisposable
         _entities.Destroy(entity);
     }
 
-    // Считаем от локальных значений: кеш World при переподвешивании ещё старый.
-    internal Matrix3x2 ComputeWorldMatrix(EntityId entity)
-    {
-        Matrix3x2 world = Matrix3x2.Identity;
-        EntityId current = entity;
-        while (!current.IsNone)
-        {
-            if (TryGet(current, out Transform2D local)) world *= local.LocalMatrix;
-            current = GetNodeRef(current).Parent;
-        }
-        return world;
-    }
-
-    private static void Decompose(Matrix3x2 matrix, out Vector2 position, out float rotation, out Vector2 scale)
-    {
-        position = new Vector2(matrix.M31, matrix.M32);
-        var scaleX = MathF.Sqrt((matrix.M11 * matrix.M11) + (matrix.M12 * matrix.M12));
-        if (scaleX > 1e-6f)
-        {
-            rotation = MathF.Atan2(matrix.M12, matrix.M11);
-            var scaleY = ((matrix.M11 * matrix.M22) - (matrix.M12 * matrix.M21)) / scaleX;
-            scale = new Vector2(scaleX, scaleY);
-            return;
-        }
-        var fallbackScaleY = MathF.Sqrt((matrix.M21 * matrix.M21) + (matrix.M22 * matrix.M22));
-        rotation = MathF.Atan2(-matrix.M21, matrix.M22);
-        scale = new Vector2(0f, fallbackScaleY);
-    }
-
     private void PlaceEntity(EntityId entity, ComponentMask components)
     {
         Archetype archetype = GetOrCreateArchetype(components);
         var row = archetype.AddEntity(entity);
-        if (components.Has(_nodeType.Id)) archetype.GetColumn<Node>(_nodeType)[row] = Node.New();
+        if (components.Has(_nodeType.Id)) archetype.GetColumn<Node>()[row] = Node.New();
         ref EntityRecord record = ref _entities.GetRecord(entity.Index);
         record.Archetype = archetype;
         record.Row = row;
@@ -532,6 +513,7 @@ public sealed class World : IDisposable
     {
         if (_disposed) return;
         _disposed = true;
+        BeforeReparent = null;
         _systems.Dispose();
         foreach (var resource in _resources.Values) DisposeIfNeeded(resource);
         _resources.Clear();
