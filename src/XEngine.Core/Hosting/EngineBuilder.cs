@@ -1,7 +1,6 @@
 using XEngine.Core.Ecs;
 using XEngine.Core.Modules;
 using XEngine.Core.Services;
-using XEngine.Core.Systems;
 
 namespace XEngine.Core.Hosting;
 
@@ -29,27 +28,34 @@ public sealed class EngineBuilder
         if (_built) throw new InvalidOperationException("EngineBuilder.Build can only be called once.");
         _built = true;
 
-        var registration = new ComponentRegisterContext(_components);
-        foreach (IEngineModule module in _modules) Configure(module, nameof(IEngineModule.ConfigureComponents), () => module.ConfigureComponents(registration));
-        _components.Freeze();
+        ComponentBake();
+        EngineServiceContainer services = ServicesBake();
 
-        EngineServiceContainer services = new();
-        foreach (IEngineModule module in _modules) Configure(module, nameof(IEngineModule.ConfigureServices), () => module.ConfigureServices(services));
-
-        void configurator(World world)
-        {
-            foreach (IEngineModule module in _modules) Configure(module, nameof(IEngineModule.ConfigureWorld), () => module.ConfigureWorld(world));
-        }
-
-        try
-        {
-            return new Engine(_components, services, configurator, [.. _modules]);
-        }
+        try { return new Engine(_components, services, WorldConfigurator, [.. _modules]); }
         catch
         {
             services.Dispose();
             throw;
         }
+    }
+
+    private EngineServiceContainer ServicesBake()
+    {
+        EngineServiceContainer services = new();
+        foreach (IEngineModule module in _modules) Configure(module, nameof(IEngineModule.ConfigureServices), () => module.ConfigureServices(services));
+        return services;
+    }
+
+    private void ComponentBake()
+    {
+        var registration = new ComponentRegisterContext(_components);
+        foreach (IEngineModule module in _modules) Configure(module, nameof(IEngineModule.ConfigureComponents), () => module.ConfigureComponents(registration));
+        _components.Freeze();
+    }
+
+    private void WorldConfigurator(World world)
+    {
+        foreach (IEngineModule module in _modules) Configure(module, nameof(IEngineModule.ConfigureWorld), () => module.ConfigureWorld(world));
     }
 
     private static void Configure(IEngineModule module, string phase, Action configure)

@@ -1,7 +1,8 @@
 # XEngine
 
 Headless-ядро 2D-движка: archetype ECS, иерархия, системы, сцены и отдельный модуль
-2D-трансформов. Рендер, физика, ввод и игровая логика в этот репозиторий не входят.
+2D-трансформов. В ядро рендер, физика, ввод и игровая логика не входят. Временный
+интерактивный harness с Silk.NET лежит в `samples/XEngine.Interactive`.
 
 ## Требования
 
@@ -23,10 +24,11 @@ BenchmarkDotNet — только в проекте бенчмарков.
 ```text
 src/XEngine.Core/                ядро: ECS, иерархия, системы, сцены, модули, хостинг
 src/XEngine.Common.Transform/    2D-трансформы, необязательный модуль
-tests/XEngine.Core.Tests/        xUnit-тесты
+tests/XEngine.Core.Tests/        xUnit-тесты ядра
+tests/XEngine.Interactive.Tests/ xUnit-тесты чистой логики sample
 benchmarks/XEngine.Core.Benchmarks/ бенчмарки
 docs/                            планы, TODO, стиль кода, бенчмарки
-samples/                         план временного интерактивного harness
+samples/XEngine.Interactive/     временный интерактивный harness на Silk.NET
 legacy/                          справочный архив старого прототипа
 ```
 
@@ -99,12 +101,14 @@ standalone-сценариев `new World()`/`new SceneManager()` создают 
 - `docs/code-style.md` — стиль кода.
 - `docs/TODO.md` — планы и задачи.
 - `docs/benchmarks.md` — команды, замеры и выводы по производительности.
-- `samples/plan.md` — план временного интерактивного harness на Silk.NET.
+- `samples/XEngine.Interactive/README.md` — временный harness на Silk.NET.
+- `samples/plan.md` — история плана harness.
 - `legacy/README.md` — описание справочного архива старого прототипа.
 
 ## Вне текущего этапа
 
-- Рендер, окно, ввод, спрайты, камера, батчинг.
+- Продуктовый рендер, окно и ввод как подсистемы движка (sample — только harness).
+- Спрайты, NineSlice, батчинг.
 - Физика (Box2D или другая).
 - Конфигурация, hot-reload, асинхронные ресурсы и префабы.
 - Скриптовый язык сцен и игровая логика GunFight.

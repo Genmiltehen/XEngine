@@ -40,7 +40,7 @@
 - TODO [3]: Визуальные компоненты (Sprite, SpriteRenderer, Camera) живут в отдельной сборке рендера.
 - TODO [3]: Рендер читает World, строит снимок кадра и список команд; ядро об этом не знает.
 - TODO [3]: Конвертация row-vector-матриц в column-major для GPU выполняется на границе рендера.
-- TODO [3]: Временный samples/XEngine.Interactive проверяет интеграцию: шейдерный рендер кругов через instanced draw, камера-сущность Transform2D + Camera2D с ViewPort, HiDPI-ввод без конвертации в сервисе; план — samples/plan.md.
+- TODO [3]: Продуктовые визуальные компоненты и render-фаза — после стабилизации harness `samples/XEngine.Interactive` (шейдерные круги, instanced draw, `Camera2D`, HiDPI-ввод уже проверены вручную).
 
 ## [ Физика ]
 - TODO [3]: Физика подключается отдельным проектом: свои компоненты, системы и ресурс физического мира.
@@ -56,6 +56,6 @@
 - TODO [4]: Политика логирования — после появления runtime-слоя.
 
 # [ Вне текущего этапа ]
-- TODO [4]: Silk.NET, окно, ввод и OpenGL как подсистема движка (временный harness — samples/XEngine.Interactive; Core от графики не зависит).
+- TODO [4]: Silk.NET, окно, ввод и OpenGL как подсистема движка; сейчас есть только harness `samples/XEngine.Interactive`, Core от графики не зависит.
 - TODO [4]: Спрайты, NineSlice, камера как подсистема движка, батчинг.
 - TODO [4]: Конфигурация движка и hot-reload.

@@ -6,7 +6,11 @@
     <Project Path="src/XEngine.Core/XEngine.Core.csproj" />
     <Project Path="src/XEngine.Common.Transform/XEngine.Common.Transform.csproj" />
   </Folder>
+  <Folder Name="/samples/">
+    <Project Path="samples/XEngine.Interactive/XEngine.Interactive.csproj" />
+  </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/XEngine.Core.Tests/XEngine.Core.Tests.csproj" />
+    <Project Path="tests/XEngine.Interactive.Tests/XEngine.Interactive.Tests.csproj" />
   </Folder>
 </Solution>

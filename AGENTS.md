@@ -2,7 +2,7 @@
 
 Инструкции для агентов и разработчиков. Пользовательская документация — `README.md`.
 Дополнительно: `docs/code-style.md`, `docs/TODO.md`, `docs/benchmarks.md`,
-`samples/plan.md`, `legacy/README.md`.
+`samples/XEngine.Interactive/README.md`, `samples/plan.md`, `legacy/README.md`.
 
 ## Назначение и границы
 
@@ -13,7 +13,8 @@
   окне, OpenGL/Silk.NET.
 - `src/XEngine.Common.Transform` зависит только от `XEngine.Core`.
 - Рендер, физика и ввод подключаются отдельными проектами через модули, системы и
-  ресурсы. `samples/XEngine.Interactive` пока существует только как план.
+  ресурсы. `samples/XEngine.Interactive` — временный harness на Silk.NET, не часть
+  ядра и не продуктовая подсистема рендера.
 - `legacy/` — справочный архив старого прототипа. Он не входит в `XEngine.slnx`, не
   компилируется и не является рабочим кодом.
 - `bin/`, `obj/`, `BenchmarkDotNet.Artifacts/` — сгенерированные каталоги, не редактировать.
@@ -45,7 +46,13 @@ src/XEngine.Core/
 src/XEngine.Common.Transform/
   Transform2D, TransformFlags, TransformSystem, TransformModule,
   TransformWorldConfigurator, TransformReparentListener
+samples/XEngine.Interactive/
+  Program, SilkTestModule, SilkGraphicsService, Clock, SilkTestOptions,
+  Camera/ (Camera2D, CameraView), Input/ (IInputService, InputService, InputSystem, Axis, ScrollAccumulator),
+  Render/ (Circle, CircleInstance, CircleRenderer, CircleRenderSystem, Shader, UnitQuad),
+  Demo/ (DemoScene, DemoControlSystem)
 tests/XEngine.Core.Tests/       xUnit, без GPU
+tests/XEngine.Interactive.Tests/ xUnit, чистая логика sample без GPU
 benchmarks/XEngine.Core.Benchmarks/ BenchmarkDotNet
 ```
 
@@ -79,6 +86,25 @@ benchmarks/XEngine.Core.Benchmarks/ BenchmarkDotNet
   платформенные ресурсы (окно, GL, ввод) не кладите в ресурсы мира.
 - `Core` остаётся dimension-agnostic: 3D-трансформы и физика — отдельные модули, не
   замена `Transform2D` в ядре.
+
+## Sample `XEngine.Interactive`
+
+- Только для ручной проверки. Не продуктовый рендер и не часть ядра.
+- Пакеты Silk.NET подключены только в sample; `Core` о них не знает.
+- Окно, GL и input context создаются в `OnEngineCreated`. `SilkGraphicsService`
+  освобождает `EngineServiceContainer`; `CircleRenderer` — поле модуля, не сервис и
+  не ресурс мира.
+- Рендер идёт в `Transform`-фазе после `TransformSystem`, `SwapBuffers` — там же.
+- Guard `FrameCount == 0` обязателен: `SceneManager.BuildScene` вызывает
+  `UpdateTransforms()` до первого кадра.
+- Матрица загружается в GL с `transpose = false`; GLSL умножает
+  `uViewProjection * vec4(...)`. `transpose = true` даст неверный результат для
+  row-vector матриц.
+- `Camera2D` и `Circle` регистрируются в `ConfigureComponents`; `Transform2D` даёт
+  `TransformModule`.
+- HiDPI-конвертация — в `CameraView`, не в `InputService`.
+- `ScrollDelta` — накопленные тики колеса с прошлого `Poll`; это не координата,
+  HiDPI-масштаб к нему не применяется.
 
 ## Правила изменений
 
